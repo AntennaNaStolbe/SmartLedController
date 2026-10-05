@@ -7,6 +7,9 @@
 
 #define HA_ESP_LIGHT_ENDPOINT 10
 
+/* The coordinator (Zigbee2MQTT bridge) serves the Time cluster on endpoint 1. */
+#define HA_ESP_COORDINATOR_ENDPOINT 1
+
 /* Scan all Zigbee channels (11..26) on join */
 #define ESP_ZB_PRIMARY_CHANNEL_MASK   ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK
 #define ESP_ZB_SECONDARY_CHANNEL_MASK ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK

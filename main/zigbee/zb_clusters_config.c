@@ -107,8 +107,8 @@ static esp_zb_attribute_list_t *slctr_color_cluster(void)
     color_temperature = light_model_get_color_temp();
 
     esp_zb_color_control_cluster_add_attr(cl, ESP_ZB_ZCL_ATTR_COLOR_CONTROL_COLOR_TEMPERATURE_ID, &color_temperature);
-    esp_zb_color_control_cluster_add_attr(cl, ESP_ZB_ZCL_ATTR_COLOR_CONTROL_COLOR_TEMP_MIN_MIREDS_ID, &min_mireds);
-    esp_zb_color_control_cluster_add_attr(cl, ESP_ZB_ZCL_ATTR_COLOR_CONTROL_COLOR_TEMP_MAX_MIREDS_ID, &max_mireds);
+    /* 0x400b/0x400c are the only min/max mired attributes in this ZCL revision
+     * (the legacy ColorTempMin/MaxMireds names were folded into them). */
     esp_zb_color_control_cluster_add_attr(cl, ESP_ZB_ZCL_ATTR_COLOR_CONTROL_COLOR_TEMP_PHYSICAL_MIN_MIREDS_ID, &min_mireds);
     esp_zb_color_control_cluster_add_attr(cl, ESP_ZB_ZCL_ATTR_COLOR_CONTROL_COLOR_TEMP_PHYSICAL_MAX_MIREDS_ID, &max_mireds);
     return cl;
@@ -123,6 +123,8 @@ esp_zb_cluster_list_t *slctr_clusters_create(void)
     esp_zb_cluster_list_add_on_off_cluster(list, slctr_on_off_cluster(), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
     esp_zb_cluster_list_add_level_cluster(list, slctr_level_cluster(), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
     esp_zb_cluster_list_add_color_control_cluster(list, slctr_color_cluster(), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+    /* Client role: we read UTC from the coordinator's Time server. */
+    esp_zb_cluster_list_add_time_cluster(list, NULL, ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
     return list;
 }
 

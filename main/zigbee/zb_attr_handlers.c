@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "light_model.h"
+#include "time/clock.h"
 #include "zb_attr_handlers.h"
 #include "zb_config.h"
 
@@ -103,6 +104,10 @@ esp_err_t zb_attr_handler(const esp_zb_zcl_set_attr_value_message_t *message)
     ESP_RETURN_ON_FALSE(message, ESP_FAIL, TAG, "Empty message");
     ESP_RETURN_ON_FALSE(message->info.status == ESP_ZB_ZCL_STATUS_SUCCESS, ESP_ERR_INVALID_ARG, TAG,
                         "Received message with error status (%d)", message->info.status);
+
+    /* Anything addressed to us is an external actor, so tag it REMOTE and the
+     * model will not echo it back onto the mesh. */
+    light_model_set_origin(LIGHT_ORIGIN_REMOTE);
 
     if (message->info.dst_endpoint == HA_ESP_LIGHT_ENDPOINT) {
         switch (message->info.cluster) {

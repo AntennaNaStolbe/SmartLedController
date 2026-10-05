@@ -10,3 +10,24 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 
 # --- Logging ---
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# --- LVGL ---
+# The lvgl__lvgl port builds from Kconfig (CONFIG_LV_CONF_SKIP is on by
+# default), so fonts and widgets are selected here rather than in lv_conf.h.
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_MEM_SIZE_KILOBYTES=48
+
+# Fonts used by the UI: dim captions, default text, and the two big readouts.
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+CONFIG_LV_FONT_DEFAULT_MONTSERRAT_16=y
+
+# The dial and the readouts are the whole interface.
+CONFIG_LV_USE_ARC=y
+CONFIG_LV_USE_LABEL=y
+CONFIG_LV_USE_LINE=y
+
+# lv_tick_inc() is driven by display_init.c, so leave CONFIG_LV_TICK_CUSTOM off.

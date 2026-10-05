@@ -6,6 +6,7 @@
 #include "ha/esp_zigbee_ha_standard.h"
 
 #include "storage.h"
+#include "time/clock.h"
 #include "zb_app.h"
 #include "zb_attr_handlers.h"
 #include "zb_attr_report.h"
@@ -22,6 +23,21 @@ static void report_state_alarm_cb(uint8_t arg)
 {
     (void)arg;
     zb_attr_report_current_state();
+}
+
+static void request_time_alarm_cb(uint8_t arg)
+{
+    (void)arg;
+    zb_request_time_sync();
+}
+
+static void on_joined(void)
+{
+    xEventGroupSetBits(s_connected_group, CONNECTED_BIT);
+    esp_zb_scheduler_alarm(report_state_alarm_cb, 0, 200);
+    /* Give the coordinator a moment to answer commissioning before asking
+     * for the clock, then the clock module keeps us in sync. */
+    esp_zb_scheduler_alarm(request_time_alarm_cb, 0, 2000);
 }
 
 static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
@@ -51,8 +67,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
             } else {
                 ESP_LOGI(TAG, "Device rebooted, restored network (short address: 0x%04x, PAN ID: 0x%04x)",
                          esp_zb_get_short_address(), esp_zb_get_pan_id());
-                xEventGroupSetBits(s_connected_group, CONNECTED_BIT);
-                esp_zb_scheduler_alarm(report_state_alarm_cb, 0, 200);
+                on_joined();
             }
         } else {
             ESP_LOGW(TAG, "%s failed: %s, retrying...", esp_zb_zdo_signal_to_string(sig_type), esp_err_to_name(err_status));
@@ -66,7 +81,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
             esp_zb_ieee_addr_t extended_pan_id;
             esp_zb_get_extended_pan_id(extended_pan_id);
             esp_zb_ieee_addr_t ieee_addr;
-            esp_zb_get_ieee_addr(ieee_addr);
+            esp_zb_get_long_address(ieee_addr);
             ESP_LOGI(TAG, "Joined network successfully");
             ESP_LOGI(TAG, "IEEE address: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x",
                      ieee_addr[7], ieee_addr[6], ieee_addr[5], ieee_addr[4],
@@ -75,9 +90,8 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                      extended_pan_id[7], extended_pan_id[6], extended_pan_id[5], extended_pan_id[4],
                      extended_pan_id[3], extended_pan_id[2], extended_pan_id[1], extended_pan_id[0]);
             ESP_LOGI(TAG, "PAN ID: 0x%04x, short address: 0x%04x, channel: %d",
-                     esp_zb_get_pan_id(), esp_zb_get_short_address(), esp_zb_get_radio_channel());
-            xEventGroupSetBits(s_connected_group, CONNECTED_BIT);
-            esp_zb_scheduler_alarm(report_state_alarm_cb, 0, 200);
+                     esp_zb_get_pan_id(), esp_zb_get_short_address(), esp_zb_get_current_channel());
+            on_joined();
         } else {
             ESP_LOGW(TAG, "Network steering was not successful (status: %s), retrying...", esp_err_to_name(err_status));
             esp_zb_scheduler_alarm((esp_zb_callback_t)bdb_start_top_level_commissioning_cb,
@@ -135,6 +149,9 @@ static void esp_zb_task(void *pvParameters)
 void appzb_init(void)
 {
     s_connected_group = xEventGroupCreate();
+
+    /* Let the clock module poll the coordinator on a timer. */
+    clock_set_resync_cb(zb_request_time_sync);
 
     esp_zb_platform_config_t config = {
         .radio_config = ESP_ZB_DEFAULT_RADIO_CONFIG(),

@@ -1,12 +1,11 @@
-set(LV_CONF_PATH "${CMAKE_CURRENT_LIST_DIR}/lv_conf.h" CACHE STRING "" FORCE)
-
 idf_component_register(
     SRCS
         "main.c"
         "storage.c"
         "light_model.c"
         "output/led_controller.c"
-        "input/encoder.c"
+        "input/input.c"
+        "time/clock.c"
         "zigbee/zb_app.c"
         "zigbee/zb_clusters_config.c"
         "zigbee/zb_attr_handlers.c"
@@ -17,10 +16,12 @@ idf_component_register(
         "."
         "output"
         "input"
+        "time"
         "zigbee"
         "display"
     REQUIRES
         driver
+        esp_driver_pcnt
         nvs_flash
         freertos
         esp_lcd

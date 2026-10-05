@@ -2,25 +2,22 @@
 .pio/
 .pioenvs/
 .piolibdeps/
-.vscode/
 build/
+
+# ESP-IDF / component manager state. Everything here is regenerated from
+# sdkconfig.defaults on a fresh checkout.
 sdkconfig
+sdkconfig.*
+!sdkconfig.defaults
 sdkconfig.old
-dependencies.lock
-managed_components/
-
-# ESP-IDF component manager scratch space
 managed_components/
 dependencies.lock
 
-# Zigbee / platformio caches
-.pio/
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
 
 # macOS
 .DS_Store
-
-# Editors
-*.swp
-*~
-.idea/
-.vscode/

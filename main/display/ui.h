@@ -1,11 +1,19 @@
-#pragma once
+#ifndef UI_H
+#define UI_H
 
-#include "light_model.h"
+#include <stdint.h>
 
-typedef void (*ui_get_state_fn_t)(light_state_t *out);
+#include "input/input.h"
 
-/* Build the 240x240 screen; must be called after display_init(). */
-void ui_init(ui_get_state_fn_t get_state);
+/* Build the 240x240 screen and start the UI task. Must be called after
+ * display_init() and before input_init(). */
+void ui_init(void);
 
-/* Called whenever the light state changed; reads the state and redraws. */
+/* Non-blocking: request a redraw from the current light state. Safe to call
+ * from any task, including the Zigbee stack task. */
 void ui_request_refresh(void);
+
+/* Route an encoder gesture. Called from the encoder task; must not block. */
+void ui_handle_input(const input_event_t *ev);
+
+#endif /* UI_H */

@@ -170,7 +170,10 @@ static void model_changed(bool local)
     }
 }
 
-/* Apply + notify for a mutated model. Called without the lock held. */
+/* Apply + notify for a mutated model. Called with the lock held, so the
+ * change callback must stay non-blocking and must not re-enter the model;
+ * ui_request_refresh() only sets a flag and posts to a queue. The mesh report
+ * is handed to the worker rather than sent inline. */
 static void model_commit(light_origin_t origin)
 {
     model_apply_locked();

@@ -1,7 +1,7 @@
 #include <string.h>
 
 #include "driver/gpio.h"
-#include "driver/pcnt.h"
+#include "driver/pulse_cnt.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -43,7 +43,8 @@ static void emit(input_ev_kind_t kind, int8_t detents)
 
 static void enc_poll(void)
 {
-    int32_t raw = 0;
+    /* The new PCNT API takes a plain int; keep the accumulator wide. */
+    int raw = 0;
     if (pcnt_unit_get_count(s_unit, &raw) != ESP_OK) {
         return;
     }

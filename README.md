@@ -1,7 +1,8 @@
 # SmartLedController — CCT LED controller (ESP32-C6)
 
 A round-display smart controller for a warm/cool white (CCT) LED strip. Built on
-the ESP32-C6 SuperMini with ESP-IDF + LVGL + the official `esp-zigbee-lib` v1.6.
+the ESP32-C6 SuperMini with PlatformIO + ESP-IDF 5.5 + LVGL 8.4 + the official
+`esp-zigbee-lib` v1.6.
 
 The device joins zigbee2mqtt as a **mesh router** and exposes a standard HA
 *dimmable color-temperature light*:
@@ -14,17 +15,18 @@ The device joins zigbee2mqtt as a **mesh router** and exposes a standard HA
 
 | Function      | GPIO | Notes                     |
 |---------------|------|---------------------------|
-| Display SCK   | 6    | SPI2, GC9A01, 240×240     |
-| Display MOSI  | 7    |                           |
-| Display CS    | 2    |                           |
-| Display DC    | 3    |                           |
-| Display RES   | 1    |                           |
-| Display BLK   | 0    | backlight, 1 = on         |
-| Encoder CLK   | 18   | EC11 quadrature           |
-| Encoder DT    | 19   |                           |
-| Encoder KEY   | 20   | input, pull-up, active low |
-| LED warm      | 4    | PWM (LEDC, 11-bit)        |
-| LED cool      | 5    | PWM (LEDC, 11-bit)        |
+| Display SCK   | 6    | SPI2, GC9A01, 240×240      |
+| Display MOSI  | 7    |                            |
+| Display CS    | 3    |                            |
+| Display DC    | 1    |                            |
+| Display RES   | 0    |                            |
+| Encoder CLK   | 4    | EC11 quadrature            |
+| Encoder DT    | 5    |                            |
+| Encoder KEY   | 2    | input, pull-up, active low  |
+| LED warm      | 18   | PWM (LEDC, 11-bit)         |
+| LED cool      | 19   | PWM (LEDC, 11-bit)         |
+
+There is no backlight control pin: the display backlight is hard-wired on.
 
 Warm/cool channels are mixed from the requested CCT
 (`warm = (mireds-min)/(max-min)`), gamma-corrected (1.5) and driven over a
@@ -32,23 +34,34 @@ smooth fade (default transition 200 ms).
 
 ## Controls
 
-- **Click** — power on/off
+- **Click** (< 400 ms) — power on/off
 - **Rotate** — brightness (step 8/254)
 - **Hold + rotate** — colour temperature (mireds 154..333)
+- **Hold 1.5 s** (no rotation) — settings menu
 - **Hold 5 s** — factory reset (settings + Zigbee network)
 - Zigbee **identify** — blinks the strip for the requested time
 
+Turning or adjusting while off switches the light on first, then applies the
+change, matching `MoveToLevelWithOnOff` semantics.
+
 ## Build & flash
 
-Requires ESP-IDF ≥ 5.0 (with Zigbee support — e.g. `install.sh esp32c6`), plus the
-component manager (bundled with IDF). The `espressif/esp-zigbee-lib` dependency
-pins the classic `esp_zb_*` v1.6 API.
+Built with PlatformIO, which supplies ESP-IDF 5.5 itself — no separate IDF
+install is needed. The `espressif/esp-zigbee-lib` dependency pins the classic
+`esp_zb_*` v1.6 API.
 
 ```sh
-idf.py set-target esp32c6
-idf.py build
-idf.py -p /dev/tty.usbmodem* flash monitor
+pio run -e smartled-c6
+pio run -e smartled-c6 -t upload
+pio device monitor
 ```
+
+LVGL is configured through Kconfig rather than a hand-written `lv_conf.h`: the
+`lvgl__lvgl` port sets `CONFIG_LV_CONF_SKIP=y` by default. Font sizes, colour
+depth and the memory pool live in `sdkconfig.defaults`.
+
+For a fresh checkout, delete `sdkconfig.smartled-c6` first so the defaults are
+re-applied.
 
 ### Partition table
 
@@ -64,8 +77,17 @@ partitions (as required by the esp-zigbee radio) and a 2 MB factory app slot
 3. The device appears in zigbee2mqtt as `AntennaNS SLCTR-C6-CWW`.
 4. After a power reboot it rejoins the stored network without re-pairing.
 
-State changes on the physical controller are **reported** to the coordinator
-immediately; hub commands are applied through the standard set-attr path.
+State changes on the physical controller are reported to the coordinator
+(immediately for On/Off, debounced by 400 ms while rotating); hub commands are
+applied through the standard set-attr path and are not echoed back onto the
+mesh. Writes arriving from the network are tagged `REMOTE`, local encoder
+changes `LOCAL`, and only `LOCAL` changes are reported.
+
+The device also acts as a **Time cluster client** and shows the clock on the
+off screen. It reads UTC from the coordinator on join and every 15 min. The
+timezone offset is the compiled-in fallback of UTC+3 (`CLOCK_DEFAULT_TZ_OFFSET_S`
+in `config.h`); a coordinator-supplied timezone, if present, takes precedence.
+Until the menu exists, the offset cannot be changed on the device.
 
 ### external converter
 
@@ -80,12 +102,25 @@ FNV-1a checksum + version guard). `StartUpOnOff` defaults to "previous state".
 
 ## UI
 
-Two circular LVGL arc scales on the 240×240 GC9A01:
+One dial split into two halves on the 240×240 GC9A01:
 
-- top arc — colour temperature (K)
-- bottom arc — brightness (%)
-- center — ON/OFF indicator
-- bottom line — compact state string `0 45% 3000K`
+- top arc — colour temperature, value in K
+- bottom arc — brightness, value in %
+- center — both values while idle
+
+Screens:
+
+- **main** — both scales, both readouts
+- **brightness** — rotate to focus; the temperature scale fades out and the
+  brightness value is shown large in the middle
+- **colour temperature** — hold and rotate to focus; the brightness scale fades
+  out and the value in K is shown large
+- **off** — `OFF` plus the current time and date
+- **menu** — entered with a 1.5 s hold; navigation is in place, the list itself
+  is empty (presets, settings reset and timezone are the planned items)
+
+Dial values and screen changes are animated (150–200 ms), and focus returns to
+the main screen 3 s after the last adjustment.
 
 ## Notes / limitations
 
@@ -97,3 +132,6 @@ Two circular LVGL arc scales on the 240×240 GC9A01:
 - On `LEAVE` (device removed by coordinator) the device factory-resets and
   reboots to allow clean re-pairing.
 - No OTA / MQTT / Home Assistant auto-discovery is implemented (out of scope).
+- The timezone is fixed at UTC+3 until the menu provides a way to change it.
+- The menu is a foundation only: navigation events are handled, but there is
+  nothing to navigate yet.

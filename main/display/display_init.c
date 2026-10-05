@@ -58,7 +58,8 @@ static void lvgl_init(void)
     static lv_disp_draw_buf_t draw_buf;
     static lv_color_t buf1[LCD_STRIPE_PX];
     static lv_color_t buf2[LCD_STRIPE_PX];
-    lv_disp_draw_buf_init(&draw_buf, buf1, buf2, LCD_DRAW_BUF_LINES);
+    /* The last argument is the buffer length in pixels, not in rows. */
+    lv_disp_draw_buf_init(&draw_buf, buf1, buf2, LCD_STRIPE_PX);
 
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);
