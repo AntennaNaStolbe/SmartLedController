@@ -51,12 +51,18 @@ static void storage_defaults(app_settings_t *out)
 static bool storage_load_raw(storage_blob_t *out)
 {
     nvs_handle_t h;
-    if (nvs_open(STORAGE_NS, NVS_READONLY, &h) != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to open NVS namespace '%s'", STORAGE_NS);
+    esp_err_t err = nvs_open(STORAGE_NS, NVS_READONLY, &h);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        /* Fresh chip, or nothing has been saved since a factory reset. */
+        ESP_LOGI(TAG, "No stored settings yet, starting from defaults");
+        return false;
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to open NVS namespace '%s' (%s)", STORAGE_NS, esp_err_to_name(err));
         return false;
     }
     size_t len = sizeof(*out);
-    esp_err_t err = nvs_get_blob(h, STORAGE_KEY, out, &len);
+    err = nvs_get_blob(h, STORAGE_KEY, out, &len);
     nvs_close(h);
     if (err != ESP_OK || len != sizeof(*out)) {
         ESP_LOGW(TAG, "No valid settings blob yet (err=%s, len=%d)", esp_err_to_name(err), (int)len);

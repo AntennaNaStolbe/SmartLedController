@@ -111,7 +111,9 @@ void display_init(void)
     ESP_LOGI(TAG, "Install GC9A01 panel driver");
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = PIN_LCD_RES,
-        .color_space = ESP_LCD_COLOR_SPACE_RGB,
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
+        /* Must match LV_COLOR_DEPTH; the driver rejects 0. */
+        .bits_per_pixel = 16,
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_gc9a01(io_handle, &panel_cfg, &s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));

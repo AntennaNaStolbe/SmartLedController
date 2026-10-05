@@ -492,6 +492,10 @@ void ui_init(void)
         abort();
     }
 
+    /* lvgl_task is already running at this point and LVGL is not thread safe,
+     * so build the object tree under the display lock. */
+    display_lock();
+
     lv_obj_t *scr = lv_scr_act();
     lv_obj_set_style_bg_color(scr, lv_color_hex(UI_COLOR_BG), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
@@ -516,6 +520,8 @@ void ui_init(void)
     show_screen(st.on_off ? UI_SCREEN_MAIN : UI_SCREEN_OFF, false);
     update_clock_labels();
     refresh_locked();
+
+    display_unlock();
 
     xTaskCreate(ui_task, "ui", 4096, NULL, 5, NULL);
     ESP_LOGI(TAG, "ready");

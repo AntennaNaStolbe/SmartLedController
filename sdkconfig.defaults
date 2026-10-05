@@ -11,6 +11,11 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 # --- Logging ---
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
+# --- Debugging ---
+# Prints a usable stack trace on panic, which is what we need to diagnose a
+# watchdog trip inside the LVGL task.
+CONFIG_ESP_SYSTEM_USE_FRAME_POINTER=y
+
 # --- LVGL ---
 # The lvgl__lvgl port builds from Kconfig (CONFIG_LV_CONF_SKIP is on by
 # default), so fonts and widgets are selected here rather than in lv_conf.h.
@@ -31,3 +36,11 @@ CONFIG_LV_USE_LABEL=y
 CONFIG_LV_USE_LINE=y
 
 # lv_tick_inc() is driven by display_init.c, so leave CONFIG_LV_TICK_CUSTOM off.
+
+# --- FreeRTOS ---
+# The default 100 Hz tick makes pdMS_TO_TICKS(5) round to 0, which turns
+# vTaskDelay(5) into a bare yield and starves every lower-priority task.
+CONFIG_FREERTOS_HZ=1000
+
+# CONFIG_FREERTOS_USE_TRACE_FACILITY is off to keep the firmware lean; enable it
+# in a scratch build when a task dump is needed.
