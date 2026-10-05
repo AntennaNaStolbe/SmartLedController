@@ -1,0 +1,6 @@
+dependencies:
+  idf: ">=5.0"
+  espressif/esp-zboss-lib: "~1.6.0"
+  espressif/esp-zigbee-lib: "~1.6.0"
+  espressif/esp_lcd_gc9a01: "^2.0.0"
+  lvgl/lvgl: "^8.3.0"

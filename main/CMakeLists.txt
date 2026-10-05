@@ -1,0 +1,32 @@
+set(LV_CONF_PATH "${CMAKE_CURRENT_LIST_DIR}/lv_conf.h" CACHE STRING "" FORCE)
+
+idf_component_register(
+    SRCS
+        "main.c"
+        "storage.c"
+        "light_model.c"
+        "output/led_controller.c"
+        "input/encoder.c"
+        "zigbee/zb_app.c"
+        "zigbee/zb_clusters_config.c"
+        "zigbee/zb_attr_handlers.c"
+        "zigbee/zb_attr_report.c"
+        "display/display_init.c"
+        "display/ui.c"
+    INCLUDE_DIRS
+        "."
+        "output"
+        "input"
+        "zigbee"
+        "display"
+    REQUIRES
+        driver
+        nvs_flash
+        freertos
+        esp_lcd
+        esp_lcd_gc9a01
+        lvgl
+        esp_timer
+        esp_hw_support
+        log
+)
