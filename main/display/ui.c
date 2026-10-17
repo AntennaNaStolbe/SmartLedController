@@ -14,7 +14,9 @@
 #include "time/clock.h"
 #include "zigbee/zb_app.h"
 
-#define UI_COLOR_BG        0x0e1116
+/* The screen background is set once and never changes: pure black with light
+ * text on top, in every power state. */
+#define UI_COLOR_BG        0x000000
 #define UI_COLOR_ARC_BG    0x2a3038
 #define UI_COLOR_BR        0x42a5f5
 #define UI_COLOR_CT        0xffa726
@@ -23,21 +25,27 @@
 #define UI_COLOR_OFF       0x8d949d
 
 /* One complete ring, split into two halves. Both arcs share the geometry so
- * they read as a single dial. */
+ * they read as a single dial. The two halves stop this many degrees short of
+ * 12 and 6 o'clock so the round line caps do not collide. */
 #define RING_DIAMETER      212
 #define RING_THICKNESS     12
-#define ARC_TOP_START      270     /* 12 o'clock -> 3 o'clock  */
-#define ARC_TOP_END        450
-#define ARC_BOT_START      90
-#define ARC_BOT_END        270
+#define ARC_GAP_DEG        10
+#define ARC_TOP_START      (270 + ARC_GAP_DEG / 2)   /* past 12 o'clock     */
+#define ARC_TOP_END        (450 - ARC_GAP_DEG / 2)   /* stops before 6      */
+#define ARC_BOT_START      (90 + ARC_GAP_DEG / 2)    /* past 6 o'clock      */
+#define ARC_BOT_END        (270 - ARC_GAP_DEG / 2)   /* stops before 12     */
 
-#define CENTER_TOP_Y       (-26)   /* colour temperature readout  */
-#define CENTER_BOT_Y       (26)    /* brightness readout          */
+/* Vertical centres of the value / caption pairs. Each pair is value on top,
+ * caption underneath, and the two pairs are kept clear of each other in the
+ * middle of the dial (the ring starts at radius 100, so anything inside
+ * +-90 px vertically is safe). */
+#define CENTER_TOP_Y       (-42)   /* colour temperature readout  */
+#define CENTER_CAP_Y       (-12)   /* "TEMP"                      */
+#define CENTER_BOT_Y       (18)    /* brightness readout          */
+#define CENTER_CAP2_Y      (46)    /* "BRIGHT"                    */
 
 typedef enum {
     UI_SCREEN_MAIN,        /* both scales visible (spec "state 1")     */
-    UI_SCREEN_FOCUS_BR,    /* brightness only, big value in the middle */
-    UI_SCREEN_FOCUS_CT,    /* colour temperature only                  */
     UI_SCREEN_OFF,         /* OFF + clock                              */
     UI_SCREEN_MENU,        /* settings menu, navigation only           */
 } ui_screen_t;
@@ -57,6 +65,10 @@ static volatile bool s_refresh_pending;
 
 static ui_screen_t s_screen = UI_SCREEN_OFF;
 
+/* Which parameter the encoder adjusts: false = brightness (default),
+ * true = colour temperature. Toggled by hold+release (INPUT_EV_MODE_TOGGLE). */
+static bool s_adjust_color_temp;
+
 /* main group */
 static lv_obj_t *s_grp_main;
 static lv_obj_t *s_layer_ct;
@@ -65,8 +77,8 @@ static lv_obj_t *s_arc_ct;
 static lv_obj_t *s_arc_br;
 static lv_obj_t *s_lbl_ct;
 static lv_obj_t *s_lbl_br;
-static lv_obj_t *s_lbl_ct_small;
-static lv_obj_t *s_lbl_br_small;
+static lv_obj_t *s_lbl_cap_ct;
+static lv_obj_t *s_lbl_cap_br;
 
 /* off group */
 static lv_obj_t *s_grp_off;
@@ -80,7 +92,6 @@ static lv_obj_t *s_lbl_menu_title;
 static lv_obj_t *s_lbl_menu_items;
 static lv_obj_t *s_lbl_menu_hint;
 
-static lv_timer_t *s_focus_timer;
 static lv_timer_t *s_clock_timer;
 
 /* ------------------------------------------------------------------ */
@@ -113,16 +124,17 @@ static void anim_opa_cb(void *obj, int32_t v)
     lv_obj_set_style_opa((lv_obj_t *)obj, (lv_coord_t)v, 0);
 }
 
-static void anim_opa_ready_cb(lv_anim_t *a)
+static void hide_done_cb(lv_anim_t *a)
 {
     lv_obj_add_flag((lv_obj_t *)a->var, LV_OBJ_FLAG_HIDDEN);
 }
 
-static void fade_to(lv_obj_t *obj, lv_coord_t target, uint32_t dur, bool hide_at_end)
+static void fade_to(lv_obj_t *obj, lv_opa_t target, uint32_t dur,
+                    lv_anim_ready_cb_t ready)
 {
     lv_anim_del(obj, anim_opa_cb);
 
-    if (target > 0) {
+    if (target > LV_OPA_TRANSP) {
         lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
     }
 
@@ -130,24 +142,40 @@ static void fade_to(lv_obj_t *obj, lv_coord_t target, uint32_t dur, bool hide_at
     lv_anim_init(&a);
     lv_anim_set_var(&a, obj);
     lv_anim_set_exec_cb(&a, anim_opa_cb);
-    lv_anim_set_values(&a, LV_OPA_COVER, target);
+    /* Start from wherever the object is. Hardcoding LV_OPA_COVER here made
+     * every fade-in a no-op: obj_show() set the object transparent first and
+     * the animation then went 255 -> 255, so the new screen appeared on the
+     * first frame while the old one was still fading out. */
+    lv_anim_set_values(&a, lv_obj_get_style_opa(obj, LV_PART_MAIN), target);
     lv_anim_set_time(&a, dur ? dur : 1);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
-    if (hide_at_end && target == LV_OPA_TRANSP) {
-        lv_anim_set_ready_cb(&a, anim_opa_ready_cb);
+    if (ready) {
+        lv_anim_set_ready_cb(&a, ready);
     }
     lv_anim_start(&a);
 }
 
 static void obj_show(lv_obj_t *obj, uint32_t dur)
 {
+    if (dur == 0) {
+        lv_anim_del(obj, anim_opa_cb);
+        lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_opa(obj, LV_OPA_COVER, 0);
+        return;
+    }
     lv_obj_set_style_opa(obj, LV_OPA_TRANSP, 0);
-    fade_to(obj, LV_OPA_COVER, dur, false);
+    fade_to(obj, LV_OPA_COVER, dur, NULL);
 }
 
 static void obj_hide(lv_obj_t *obj, uint32_t dur)
 {
-    fade_to(obj, LV_OPA_TRANSP, dur, true);
+    if (dur == 0) {
+        lv_anim_del(obj, anim_opa_cb);
+        lv_obj_set_style_opa(obj, LV_OPA_TRANSP, 0);
+        lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    fade_to(obj, LV_OPA_TRANSP, dur, hide_done_cb);
 }
 
 /* ------------------------------------------------------------------ */
@@ -174,6 +202,7 @@ static lv_obj_t *make_arc(lv_obj_t *parent, int16_t start, int16_t end)
     lv_arc_set_bg_angles(arc, start, end);
     lv_arc_set_rotation(arc, 0);
     lv_arc_set_range(arc, 0, 100);
+    lv_arc_set_value(arc, 0);
 
     lv_obj_set_style_arc_width(arc, RING_THICKNESS, LV_PART_MAIN);
     lv_obj_set_style_arc_color(arc, lv_color_hex(UI_COLOR_ARC_BG), LV_PART_MAIN);
@@ -211,16 +240,37 @@ static void build_main_group(lv_obj_t *scr)
     lv_obj_set_style_arc_color(s_arc_ct, lv_color_hex(UI_COLOR_CT), LV_PART_INDICATOR);
     s_lbl_ct = make_label(s_layer_ct, &lv_font_montserrat_24, lv_color_hex(UI_COLOR_TEXT),
                           CENTER_TOP_Y, "--");
-    s_lbl_ct_small = make_label(s_layer_ct, &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM),
-                                CENTER_TOP_Y + 20, "CCT");
+    s_lbl_cap_ct = make_label(s_layer_ct, &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM),
+                              CENTER_CAP_Y, "TEMP");
 
     s_layer_br = make_layer(s_grp_main);
     s_arc_br = make_arc(s_layer_br, ARC_BOT_START, ARC_BOT_END);
     lv_obj_set_style_arc_color(s_arc_br, lv_color_hex(UI_COLOR_BR), LV_PART_INDICATOR);
     s_lbl_br = make_label(s_layer_br, &lv_font_montserrat_24, lv_color_hex(UI_COLOR_TEXT),
                           CENTER_BOT_Y, "--");
-    s_lbl_br_small = make_label(s_layer_br, &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM),
-                                CENTER_BOT_Y + 20, "LEVEL");
+    s_lbl_cap_br = make_label(s_layer_br, &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM),
+                              CENTER_CAP2_Y, "BRIGHT");
+}
+
+/* Highlight whichever parameter the encoder currently adjusts: the active
+ * side keeps full opacity on its caption, value and arc indicator; the other
+ * is dimmed so it is obvious where a rotate will land. */
+static void update_mode_indicator(void)
+{
+    bool ct = s_adjust_color_temp;
+
+    lv_obj_set_style_text_color(s_lbl_cap_ct,
+                                lv_color_hex(ct ? UI_COLOR_TEXT : UI_COLOR_DIM), 0);
+    lv_obj_set_style_text_color(s_lbl_cap_br,
+                                lv_color_hex(ct ? UI_COLOR_DIM : UI_COLOR_TEXT), 0);
+
+    lv_obj_set_style_text_color(s_lbl_ct,
+                                lv_color_hex(ct ? UI_COLOR_TEXT : UI_COLOR_DIM), 0);
+    lv_obj_set_style_text_color(s_lbl_br,
+                                lv_color_hex(ct ? UI_COLOR_DIM : UI_COLOR_TEXT), 0);
+
+    lv_obj_set_style_arc_opa(s_arc_ct, ct ? LV_OPA_COVER : LV_OPA_50, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(s_arc_br, ct ? LV_OPA_50 : LV_OPA_COVER, LV_PART_INDICATOR);
 }
 
 static void build_off_group(lv_obj_t *scr)
@@ -249,7 +299,7 @@ static void build_menu_group(lv_obj_t *scr)
     s_lbl_menu_items = make_label(s_grp_menu, &lv_font_montserrat_20, lv_color_hex(UI_COLOR_TEXT),
                                   -6, "empty");
     s_lbl_menu_hint = make_label(s_grp_menu, &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM),
-                                 52, "click to exit");
+                                 52, "double click to exit");
 }
 
 /* ------------------------------------------------------------------ */
@@ -265,16 +315,6 @@ static void update_clock_labels(void)
     lv_label_set_text(s_lbl_date, buf);
 }
 
-static void show_screen(ui_screen_t screen, bool animate);
-
-static void focus_timeout_cb(lv_timer_t *t)
-{
-    (void)t;
-    if (s_screen == UI_SCREEN_FOCUS_BR || s_screen == UI_SCREEN_FOCUS_CT) {
-        show_screen(UI_SCREEN_MAIN, true);
-    }
-}
-
 static void clock_tick_cb(lv_timer_t *t)
 {
     (void)t;
@@ -283,74 +323,125 @@ static void clock_tick_cb(lv_timer_t *t)
     }
 }
 
-static void set_focus_active(bool active)
+static uint8_t brightness_pct(const light_state_t *st)
 {
-    if (active) {
-        lv_timer_reset(s_focus_timer);
-        lv_timer_resume(s_focus_timer);
-    } else {
-        lv_timer_pause(s_focus_timer);
+    return (uint8_t)((uint32_t)st->brightness * 100UL / LM_LEVEL_MAX);
+}
+
+/* Cold (6500 K) sits at 0 of the arc, warm (3000 K) at 100, matching the
+ * mired direction the ZCL side uses. */
+static uint8_t color_temp_pct(const light_state_t *st)
+{
+    int k = (int)st->color_temp_kelvin;
+    if (k < LM_CT_MIN_K) {
+        k = LM_CT_MIN_K;
+    } else if (k > LM_CT_MAX_K) {
+        k = LM_CT_MAX_K;
     }
+    return (uint8_t)(((uint32_t)(LM_CT_MAX_K - k) * 100UL) / (LM_CT_MAX_K - LM_CT_MIN_K));
+}
+
+/* Animate both arcs to the current model values. dur decides whether this
+ * is a plain value update (short) or the sweep that runs with a screen
+ * change (as long as the fade-in). */
+static void arc_sync(uint32_t dur)
+{
+    light_state_t st;
+    light_model_get(&st);
+    arc_to(s_arc_br, brightness_pct(&st), dur);
+    arc_to(s_arc_ct, color_temp_pct(&st), dur);
+}
+
+/* ------------------------------------------------------------------ */
+/* screen switching                                                    */
+/* ------------------------------------------------------------------ */
+
+/* The arcs are parked at 0 while the main screen is hidden, so that the next
+ * appearance has something to sweep from. Held means "refresh_locked() must
+ * not touch them": without it the model push that follows a power change
+ * would drive them back to the value while nobody can see it. */
+static bool s_arc_hold;
+
+/* The group on its way out and the one waiting to come in. The two halves of
+ * a transition never overlap - the incoming group starts fading only when the
+ * outgoing one is fully gone, which is what keeps the two texts apart. */
+static lv_obj_t *s_cur_group;
+static lv_obj_t *s_pending_show;
+
+static lv_obj_t *group_of(ui_screen_t screen)
+{
+    switch (screen) {
+    case UI_SCREEN_MAIN: return s_grp_main;
+    case UI_SCREEN_OFF:  return s_grp_off;
+    default:             return s_grp_menu;
+    }
+}
+
+static void show_next_cb(lv_anim_t *a)
+{
+    lv_obj_t *hid = (lv_obj_t *)a->var;
+    lv_obj_t *next = s_pending_show;
+
+    lv_obj_add_flag(hid, LV_OBJ_FLAG_HIDDEN);
+    s_pending_show = NULL;
+    if (next == NULL) {
+        return;   /* an instant switch cancelled the transition */
+    }
+    s_cur_group = next;
+
+    if (hid == s_grp_main) {
+        /* Nobody is looking any more: reset for the next appearance. */
+        lv_arc_set_value(s_arc_br, 0);
+        lv_arc_set_value(s_arc_ct, 0);
+        s_arc_hold = true;
+    }
+    if (next == s_grp_main) {
+        /* Sweep the scales over exactly the fade-in, so they finish running
+         * in the same frame the screen finishes appearing. */
+        s_arc_hold = false;
+        arc_sync(UI_ANIM_SCREEN_MS);
+    }
+
+    obj_show(next, UI_ANIM_SCREEN_MS);
 }
 
 static void show_screen(ui_screen_t screen, bool animate)
 {
-    const uint32_t dur = animate ? UI_ANIM_SCREEN_MS : 0;
+    lv_obj_t *newg = group_of(screen);
+    lv_obj_t *oldg = s_cur_group;
+
     s_screen = screen;
-
-    switch (screen) {
-    case UI_SCREEN_MAIN:
-        obj_show(s_grp_main, dur);
-        obj_hide(s_grp_off, dur);
-        obj_hide(s_grp_menu, dur);
-        obj_show(s_layer_br, dur);
-        obj_show(s_layer_ct, dur);
-        set_focus_active(false);
-        break;
-
-    case UI_SCREEN_FOCUS_BR:
-        /* the temperature scale hides, brightness stays and is read big */
-        obj_show(s_grp_main, dur);
-        obj_hide(s_grp_off, dur);
-        obj_hide(s_grp_menu, dur);
-        obj_show(s_layer_br, dur);
-        obj_hide(s_layer_ct, dur);
-        set_focus_active(true);
-        break;
-
-    case UI_SCREEN_FOCUS_CT:
-        obj_show(s_grp_main, dur);
-        obj_hide(s_grp_off, dur);
-        obj_hide(s_grp_menu, dur);
-        obj_hide(s_layer_br, dur);
-        obj_show(s_layer_ct, dur);
-        set_focus_active(true);
-        break;
-
-    case UI_SCREEN_OFF:
+    if (screen == UI_SCREEN_OFF) {
         update_clock_labels();
-        obj_hide(s_grp_main, dur);
-        obj_hide(s_grp_menu, dur);
-        obj_show(s_grp_off, dur);
-        set_focus_active(false);
-        break;
-
-    case UI_SCREEN_MENU:
-        obj_hide(s_grp_main, dur);
-        obj_hide(s_grp_off, dur);
-        obj_show(s_grp_menu, dur);
-        set_focus_active(false);
-        break;
     }
-}
 
-/* ------------------------------------------------------------------ */
-/* state -> widgets                                                    */
-/* ------------------------------------------------------------------ */
+    if (!animate || oldg == NULL || oldg == newg) {
+        s_pending_show = NULL;
+        /* Show the target and drop every other group straight away: with
+         * nothing to chain onto there is no callback to hide them later. */
+        obj_show(newg, 0);
+        if (s_grp_main != newg) {
+            obj_hide(s_grp_main, 0);
+        }
+        if (s_grp_off != newg) {
+            obj_hide(s_grp_off, 0);
+        }
+        if (s_grp_menu != newg) {
+            obj_hide(s_grp_menu, 0);
+        }
+        s_cur_group = newg;
+        s_arc_hold = (newg != s_grp_main);
+        if (newg == s_grp_main) {
+            arc_sync(0);
+        }
+        return;
+    }
 
-static uint32_t mireds_to_kelvin(uint16_t mireds)
-{
-    return mireds ? (1000000UL / mireds) : 0;
+    if (oldg == s_grp_main) {
+        s_arc_hold = true;
+    }
+    s_pending_show = newg;
+    fade_to(oldg, LV_OPA_TRANSP, UI_ANIM_SCREEN_MS, show_next_cb);
 }
 
 static void refresh_locked(void)
@@ -360,23 +451,18 @@ static void refresh_locked(void)
 
     char buf[24];
 
-    uint8_t br_pct = (uint8_t)((uint32_t)st.brightness * 100UL / LM_LEVEL_MAX);
-    uint32_t kelvin = mireds_to_kelvin(st.color_temp_mireds);
-    uint8_t ct_pct = (uint8_t)((uint32_t)(st.color_temp_mireds - LM_CT_MIN_MIREDS) * 100UL
-                               / (LM_CT_MAX_MIREDS - LM_CT_MIN_MIREDS));
-
-    snprintf(buf, sizeof(buf), "%u%%", (unsigned)br_pct);
+    snprintf(buf, sizeof(buf), "%u%%", (unsigned)brightness_pct(&st));
     lv_label_set_text(s_lbl_br, buf);
-    lv_label_set_text_fmt(s_lbl_br_small, "%u%%", (unsigned)br_pct);
 
-    snprintf(buf, sizeof(buf), "%luK", (unsigned long)kelvin);
+    snprintf(buf, sizeof(buf), "%luK", (unsigned long)st.color_temp_kelvin);
     lv_label_set_text(s_lbl_ct, buf);
-    lv_label_set_text_fmt(s_lbl_ct_small, "%luK", (unsigned long)kelvin);
 
     /* Drive the dials from the model, animating towards the new value so a
      * jump coming from Home Assistant looks the same as a local turn. */
-    arc_to(s_arc_br, br_pct, UI_ANIM_FAST_MS);
-    arc_to(s_arc_ct, ct_pct, UI_ANIM_FAST_MS);
+    if (!s_arc_hold) {
+        arc_to(s_arc_br, brightness_pct(&st), UI_ANIM_FAST_MS);
+        arc_to(s_arc_ct, color_temp_pct(&st), UI_ANIM_FAST_MS);
+    }
 
     if (s_screen != UI_SCREEN_OFF) {
         update_clock_labels();
@@ -386,18 +472,6 @@ static void refresh_locked(void)
 /* ------------------------------------------------------------------ */
 /* input handling                                                      */
 /* ------------------------------------------------------------------ */
-
-static void focus_value(int8_t detents, bool color_temp)
-{
-    light_model_set_origin(LIGHT_ORIGIN_LOCAL);
-    if (color_temp) {
-        light_model_adjust_color_temp(detents);
-        show_screen(UI_SCREEN_FOCUS_CT, true);
-    } else {
-        light_model_adjust_brightness(detents);
-        show_screen(UI_SCREEN_FOCUS_BR, true);
-    }
-}
 
 static void apply_event(const input_event_t *ev)
 {
@@ -412,29 +486,35 @@ static void apply_event(const input_event_t *ev)
         if (!light_model_is_on()) {
             light_model_set_power(true);
         }
-        focus_value(ev->detents, false);
+        if (s_adjust_color_temp) {
+            light_model_adjust_color_temp(ev->detents, ev->accel);
+        } else {
+            light_model_adjust_brightness(ev->detents, ev->accel);
+        }
         break;
 
-    case INPUT_EV_ROTATE_HELD:
+    case INPUT_EV_MODE_TOGGLE:
         if (s_screen == UI_SCREEN_MENU) {
             break;
         }
-        if (!light_model_is_on()) {
-            light_model_set_power(true);
+        s_adjust_color_temp = !s_adjust_color_temp;
+        update_mode_indicator();
+        break;
+
+    case INPUT_EV_DOUBLE_CLICK:
+        if (s_screen == UI_SCREEN_MENU) {
+            show_screen(light_model_is_on() ? UI_SCREEN_MAIN : UI_SCREEN_OFF, true);
+        } else {
+            show_screen(UI_SCREEN_MENU, true);
         }
-        focus_value(ev->detents, true);
         break;
 
     case INPUT_EV_BTN_UP:
         if (s_screen == UI_SCREEN_MENU) {
-            show_screen(light_model_is_on() ? UI_SCREEN_MAIN : UI_SCREEN_OFF, true);
+            /* Reserved for menu item selection. */
             break;
         }
         light_model_toggle_power();
-        break;
-
-    case INPUT_EV_MENU:
-        show_screen(UI_SCREEN_MENU, true);
         break;
 
     case INPUT_EV_FACTORY:
@@ -470,7 +550,7 @@ static void ui_task(void *arg)
             light_state_t st;
             light_model_get(&st);
             /* The model drives the screen: an off light always shows the
-             * OFF screen, whatever the last local focus was. */
+             * OFF screen, whatever was on it before. */
             if (s_screen != UI_SCREEN_MENU && !st.on_off) {
                 if (s_screen != UI_SCREEN_OFF) {
                     show_screen(UI_SCREEN_OFF, true);
@@ -505,13 +585,11 @@ void ui_init(void)
     build_main_group(scr);
     build_off_group(scr);
     build_menu_group(scr);
+    update_mode_indicator();
 
     /* Start fully transparent so the first transition is a fade-in. */
     obj_hide(s_grp_main, 0);
     obj_hide(s_grp_menu, 0);
-
-    s_focus_timer = lv_timer_create(focus_timeout_cb, UI_FOCUS_TIMEOUT_MS, NULL);
-    lv_timer_pause(s_focus_timer);
 
     s_clock_timer = lv_timer_create(clock_tick_cb, 1000, NULL);
 

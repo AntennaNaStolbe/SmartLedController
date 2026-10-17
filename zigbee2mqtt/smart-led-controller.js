@@ -11,9 +11,10 @@ const definition = {
     description: 'Smart CCT LED controller (Zigbee mesh router)',
     meta: {},
     extend: [
-        extend.state(),
-        extend.brightness(),
-        extend.colorTemp({range: [154, 333]}),
+        extend.light({
+            colorTemp: {range: [154, 333]},
+            effects: [],
+        }),
     ],
     isModernExtend: true,
 };

@@ -15,7 +15,10 @@
 typedef struct {
     bool     on_off;
     uint8_t  brightness;         /* 0..LM_LEVEL_MAX, 0 means "off" */
-    uint16_t color_temp_mireds;  /* LM_CT_MIN_MIREDS..LM_CT_MAX_MIREDS */
+    uint16_t color_temp_mireds;  /* integer mireds, ZCL/HA boundary value */
+    uint16_t color_temp_kelvin;  /* the same colour temperature, exact:
+                                  * this is what the display shows and what
+                                  * the encoder steps by */
 } light_state_t;
 
 /* Who caused the current change. Changes made from Zigbee (HA / Z2M) must not
@@ -48,9 +51,11 @@ void light_model_set_transition_time(uint16_t ms);
 void light_model_set_power(bool on);
 void light_model_toggle_power(void);
 void light_model_set_brightness(uint8_t level);
-void light_model_adjust_brightness(int8_t detents);
+/* detents * accel steps; accel comes from the encoder and scales the step
+ * with the rotation speed (1 = slow, precise). */
+void light_model_adjust_brightness(int8_t detents, uint8_t accel);
 void light_model_set_color_temp(uint16_t mireds);
-void light_model_adjust_color_temp(int8_t detents);
+void light_model_adjust_color_temp(int8_t detents, uint8_t accel);
 
 void light_model_get(light_state_t *out);
 bool     light_model_is_on(void);

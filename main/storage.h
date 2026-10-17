@@ -8,7 +8,7 @@
 typedef struct {
     bool     on_off;
     uint8_t  brightness;            /* 0..254 */
-    uint16_t color_temp_mireds;     /* 154..333 */
+    uint16_t color_temp_mireds;     /* mireds x10, 1540..3330 */
     uint16_t on_transition_time;    /* ms */
     uint16_t off_transition_time;   /* ms */
     uint8_t  startup_behavior;      /* ZCL StartUpOnOff: 0=off, 1=on, 2=toggle, 255=previous */

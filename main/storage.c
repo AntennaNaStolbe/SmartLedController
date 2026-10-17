@@ -40,7 +40,7 @@ static void storage_defaults(app_settings_t *out)
     }
     out->on_off = false;
     out->brightness = 200;
-    out->color_temp_mireds = 244;           /* ~4100 K */
+    out->color_temp_mireds = 2440;          /* mireds x10, ~4100 K */
     out->on_transition_time = 200;          /* ms */
     out->off_transition_time = 200;         /* ms */
     out->startup_behavior = 255;            /* restore previous state */
@@ -96,7 +96,7 @@ bool storage_load(app_settings_t *out)
     storage_blob_t b;
     if (storage_load_raw(&b)) {
         *out = b.settings;
-        ESP_LOGI(TAG, "Settings loaded: on=%d, brightness=%u, mireds=%u, startup=%u",
+        ESP_LOGI(TAG, "Settings loaded: on=%d, brightness=%u, mireds_x10=%u, startup=%u",
                  b.settings.on_off, b.settings.brightness, b.settings.color_temp_mireds, b.settings.startup_behavior);
         return true;
     }

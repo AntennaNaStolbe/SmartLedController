@@ -17,18 +17,45 @@ static pcnt_unit_handle_t s_unit;
 static int32_t s_raw_last;
 static int32_t s_detent_acc;
 
+/* Rotation rate, detents per second, exponentially smoothed so a single
+ * burst does not jump the step size. Only updated by actual movement. */
+static uint16_t s_rate;
+static uint32_t s_last_move_ms;
+static bool     s_rate_valid;
+
 static input_handler_t s_handler;
 
 /* button state */
 static bool s_btn_level;         /* debounced level, true = pressed */
 static bool s_btn_down;          /* press already registered        */
-static bool s_hold_detected;    /* rotate-while-held is active     */
-static bool s_menu_fired;
+static bool s_rotated_during_hold; /* rotation consumed while held   */
 static bool s_factory_fired;
 static uint32_t s_btn_down_ms;
 static uint32_t s_btn_stable_ms;
 
-static void emit(input_ev_kind_t kind, int8_t detents)
+/* single click is held back for BTN_DOUBLE_CLICK_WINDOW_MS so that a second
+ * click can turn it into INPUT_EV_DOUBLE_CLICK instead. */
+static bool     s_pending_single;
+static uint32_t s_pending_single_ms;
+
+static uint8_t accel_from_rate(uint16_t rate)
+{
+    if (rate < ENC_RATE_T1) {
+        return 1;
+    }
+    if (rate < ENC_RATE_T2) {
+        return 2;
+    }
+    if (rate < ENC_RATE_T3) {
+        return 4;
+    }
+    if (rate < ENC_RATE_T4) {
+        return 8;
+    }
+    return ENC_ACCEL_MAX;
+}
+
+static void emit(input_ev_kind_t kind, int8_t detents, uint8_t accel)
 {
     if (!s_handler) {
         return;
@@ -36,9 +63,28 @@ static void emit(input_ev_kind_t kind, int8_t detents)
     input_event_t ev = {
         .kind = kind,
         .detents = detents,
+        .accel = accel,
         .held_ms = s_btn_down ? (xTaskGetTickCount() * portTICK_PERIOD_MS) - s_btn_down_ms : 0,
     };
     s_handler(&ev);
+}
+
+static uint8_t update_rate(int steps)
+{
+    uint32_t now = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    uint32_t dt = now - s_last_move_ms;
+    s_last_move_ms = now;
+
+    uint16_t rate = 0;
+    if (s_rate_valid && dt > 0 && dt <= ENC_RATE_RESET_MS) {
+        rate = (uint16_t)(((uint32_t)steps * 1000U) / dt);
+    }
+    /* A pause longer than ENC_RATE_RESET_MS counts as a fresh start, so the
+     * first detent after stopping always uses the slow, precise step. */
+    s_rate_valid = true;
+
+    s_rate = (uint16_t)(((uint32_t)s_rate * 3U + rate) / 4U);
+    return accel_from_rate(s_rate);
 }
 
 static void enc_poll(void)
@@ -72,13 +118,19 @@ static void enc_poll(void)
         steps = -127;
     }
 
-    /* The first detent after the hold threshold switches to colour
-     * temperature and cancels the pending menu gesture. */
-    if (s_btn_down && !s_hold_detected) {
-        s_hold_detected = true;
-        s_menu_fired = true;   /* consumed by this rotation */
+    uint8_t accel = update_rate(steps > 0 ? steps : -steps);
+
+    /* Rotation while the button is held is swallowed: the old hold+rotate
+     * gesture is gone, and eating it keeps an accidental twitch from
+     * cancelling the mode toggle that fires on release. A pending single
+     * click is dropped too - the user is clearly adjusting, not clicking. */
+    if (s_btn_down) {
+        s_rotated_during_hold = true;
+        s_pending_single = false;
+        return;
     }
-    emit(s_hold_detected ? INPUT_EV_ROTATE_HELD : INPUT_EV_ROTATE, steps);
+    s_pending_single = false;
+    emit(INPUT_EV_ROTATE, steps, accel);
 }
 
 static void btn_poll(void)
@@ -100,36 +152,58 @@ static void btn_poll(void)
         if (!s_btn_down) {
             s_btn_down = true;
             s_btn_down_ms = now_ms;
-            s_hold_detected = false;
-            s_menu_fired = false;
+            s_rotated_during_hold = false;
             s_factory_fired = false;
-            emit(INPUT_EV_BTN_DOWN, 0);
+            emit(INPUT_EV_BTN_DOWN, 0, 1);
         }
     } else if (s_btn_down) {
         uint32_t held = now_ms - s_btn_down_ms;
-        /* A click is a release that produced no long press. */
-        if (!s_menu_fired && !s_factory_fired && held < BTN_CLICK_MAX_MS) {
-            emit(INPUT_EV_BTN_UP, 0);
-        }
         s_btn_down = false;
-        s_hold_detected = false;
+
+        if (s_factory_fired) {
+            s_pending_single = false;
+            return;
+        }
+
+        if (held >= BTN_MODE_HOLD_MS) {
+            /* Hold+release: toggle brightness <-> CCT. A click that came in
+             * just before the hold is cancelled so it cannot also fire. */
+            s_pending_single = false;
+            if (!s_rotated_during_hold) {
+                ESP_LOGI(TAG, "hold+release -> mode toggle");
+                emit(INPUT_EV_MODE_TOGGLE, 0, 1);
+            }
+            return;
+        }
+
+        /* Short press: candidate for single or double click. The actual
+         * BTN_UP is deferred until the double-click window expires. */
+        if (s_pending_single && (now_ms - s_pending_single_ms) <= BTN_DOUBLE_CLICK_WINDOW_MS) {
+            s_pending_single = false;
+            ESP_LOGI(TAG, "double click");
+            emit(INPUT_EV_DOUBLE_CLICK, 0, 1);
+        } else {
+            s_pending_single = true;
+            s_pending_single_ms = now_ms;
+        }
         return;
     }
 
-    if (!s_btn_down) {
-        return;
-    }
-
-    uint32_t held = now_ms - s_btn_down_ms;
-    if (!s_menu_fired && !s_hold_detected && held >= BTN_MENU_HOLD_MS) {
-        s_menu_fired = true;
-        ESP_LOGI(TAG, "long press -> menu");
-        emit(INPUT_EV_MENU, 0);
-    }
-    if (!s_factory_fired && held >= BTN_RESET_HOLD_MS) {
-        s_factory_fired = true;
-        ESP_LOGW(TAG, "very long press -> factory reset");
-        emit(INPUT_EV_FACTORY, 0);
+    if (s_btn_down) {
+        uint32_t held = now_ms - s_btn_down_ms;
+        if (!s_factory_fired && held >= BTN_RESET_HOLD_MS) {
+            s_factory_fired = true;
+            s_pending_single = false;
+            ESP_LOGW(TAG, "very long press -> factory reset");
+            emit(INPUT_EV_FACTORY, 0, 1);
+        }
+    } else if (s_pending_single &&
+               (now_ms - s_pending_single_ms) > BTN_DOUBLE_CLICK_WINDOW_MS) {
+        /* Double-click window expired with no second click: this was a
+         * single click, so let it through now. */
+        s_pending_single = false;
+        ESP_LOGI(TAG, "single click");
+        emit(INPUT_EV_BTN_UP, 0, 1);
     }
 }
 

@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -121,6 +123,49 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
     case ESP_ZB_CORE_SET_ATTR_VALUE_CB_ID:
         ret = zb_attr_handler((const esp_zb_zcl_set_attr_value_message_t *)message);
         break;
+
+    case ESP_ZB_CORE_CMD_READ_ATTR_RESP_CB_ID: {
+        const esp_zb_zcl_cmd_read_attr_resp_message_t *resp =
+            (const esp_zb_zcl_cmd_read_attr_resp_message_t *)message;
+        if (resp && resp->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_TIME) {
+            esp_zb_zcl_read_attr_resp_variable_t *var = resp->variables;
+            while (var) {
+                if (var->status == ESP_ZB_ZCL_STATUS_SUCCESS && var->attribute.data.value) {
+                    if (var->attribute.id == ESP_ZB_ZCL_ATTR_TIME_TIME_ID) {
+                        uint32_t t = 0;
+                        memcpy(&t, var->attribute.data.value, sizeof(uint32_t));
+                        clock_set_zcl_time(t);
+                    } else if (var->attribute.id == ESP_ZB_ZCL_ATTR_TIME_TIME_ZONE_ID) {
+                        int32_t tz = 0;
+                        memcpy(&tz, var->attribute.data.value, sizeof(int32_t));
+                        clock_set_timezone(tz);
+                    }
+                }
+                var = var->next;
+            }
+        }
+        ret = ESP_OK;
+        break;
+    }
+
+    case ESP_ZB_CORE_REPORT_ATTR_CB_ID: {
+        const esp_zb_zcl_report_attr_message_t *rep =
+            (const esp_zb_zcl_report_attr_message_t *)message;
+        if (rep && rep->cluster == ESP_ZB_ZCL_CLUSTER_ID_TIME && rep->status == ESP_ZB_ZCL_STATUS_SUCCESS && rep->attribute.data.value) {
+            if (rep->attribute.id == ESP_ZB_ZCL_ATTR_TIME_TIME_ID) {
+                uint32_t t = 0;
+                memcpy(&t, rep->attribute.data.value, sizeof(uint32_t));
+                clock_set_zcl_time(t);
+            } else if (rep->attribute.id == ESP_ZB_ZCL_ATTR_TIME_TIME_ZONE_ID) {
+                int32_t tz = 0;
+                memcpy(&tz, rep->attribute.data.value, sizeof(int32_t));
+                clock_set_timezone(tz);
+            }
+        }
+        ret = ESP_OK;
+        break;
+    }
+
     default:
         ESP_LOGW(TAG, "Unhandled Zigbee action (0x%x)", callback_id);
         break;

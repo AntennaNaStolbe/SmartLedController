@@ -17,7 +17,7 @@ static const char *TAG = "light_model";
 typedef struct {
     bool     on_off;
     uint8_t  brightness;
-    uint16_t mireds;
+    uint16_t kelvin;
     uint16_t transition_ms;
     uint8_t  startup_behavior;
 } model_t;
@@ -49,15 +49,54 @@ static void lm_io_task(void *arg);
 /* state helpers - must be called with the lock held                    */
 /* ------------------------------------------------------------------ */
 
+/* The model stores kelvin: that is what the display reads out and what the
+ * encoder steps by, and integer mireds are far too coarse for a 10 K step
+ * (one mired is 9 K at 3000 K but 42 K at 6500 K). Mireds only appear at
+ * the boundaries - the PWM driver, Zigbee and NVS. */
+static uint16_t kelvin_to_mireds(uint32_t k)
+{
+    if (k == 0) {
+        return 0;
+    }
+    return (uint16_t)((1000000UL + k / 2) / k);
+}
+
+static uint32_t mireds_to_kelvin(uint16_t m)
+{
+    if (m == 0) {
+        return LM_CT_MAX_K;
+    }
+    return (1000000UL + m / 2) / m;
+}
+
+/* NVS keeps mireds x10 (1540..3330) inside the same uint16 field. That
+ * costs nothing and cuts the kelvin round-trip error at boot from ~21 K to
+ * ~2 K, so a value dialled in as 4010 K does not come back as 4016 K. */
+static uint16_t kelvin_to_mireds_x10(uint32_t k)
+{
+    if (k == 0) {
+        return 0;
+    }
+    return (uint16_t)((10000000UL + k / 2) / k);
+}
+
+static uint32_t mireds_x10_to_kelvin(uint16_t mx)
+{
+    if (mx == 0) {
+        return LM_CT_MAX_K;
+    }
+    return (10000000UL + mx / 2) / mx;
+}
+
 static void model_clamp(void)
 {
     if (s_model.brightness > LM_LEVEL_MAX) {
         s_model.brightness = LM_LEVEL_MAX;
     }
-    if (s_model.mireds < LM_CT_MIN_MIREDS) {
-        s_model.mireds = LM_CT_MIN_MIREDS;
-    } else if (s_model.mireds > LM_CT_MAX_MIREDS) {
-        s_model.mireds = LM_CT_MAX_MIREDS;
+    if (s_model.kelvin < LM_CT_MIN_K) {
+        s_model.kelvin = LM_CT_MIN_K;
+    } else if (s_model.kelvin > LM_CT_MAX_K) {
+        s_model.kelvin = LM_CT_MAX_K;
     }
     if (s_model.transition_ms > 5000) {
         s_model.transition_ms = 5000;
@@ -79,7 +118,8 @@ static uint8_t model_effective_level(void)
 static void model_apply_locked(void)
 {
     uint8_t level = model_effective_level();
-    lc_set_fade(s_model.on_off, level, s_model.mireds, s_model.transition_ms);
+    lc_set_fade(s_model.on_off, level, kelvin_to_mireds(s_model.kelvin),
+                s_model.transition_ms);
 }
 
 /* ------------------------------------------------------------------ */
@@ -94,7 +134,7 @@ static void model_persist(void)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     st.on_off = s_model.on_off;
     st.brightness = s_model.brightness;
-    st.color_temp_mireds = s_model.mireds;
+    st.color_temp_mireds = kelvin_to_mireds_x10(s_model.kelvin);
     st.on_transition_time = s_model.transition_ms;
     st.off_transition_time = s_model.transition_ms;
     st.startup_behavior = s_model.startup_behavior;
@@ -201,7 +241,14 @@ void light_model_init(void)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_model.on_off = st.on_off;
     s_model.brightness = st.brightness;
-    s_model.mireds = st.color_temp_mireds;
+    /* Blobs written before the x10 change hold plain mireds; anything below
+     * the new minimum is one of those, so scale it up instead of blowing
+     * away the stored settings. */
+    uint16_t mx = st.color_temp_mireds;
+    if (mx < (uint16_t)(LM_CT_MIN_MIREDS * 10)) {
+        mx = (uint16_t)(mx * 10U);
+    }
+    s_model.kelvin = (uint16_t)mireds_x10_to_kelvin(mx);
     s_model.transition_ms = st.on_transition_time ? st.on_transition_time : LM_DEFAULT_TRANSITION_MS;
     s_model.startup_behavior = st.startup_behavior;
     model_clamp();
@@ -232,8 +279,9 @@ void light_model_init(void)
     model_apply_locked();
     xSemaphoreGive(s_lock);
 
-    ESP_LOGI(TAG, "Restored: on=%d brightness=%u mireds=%u transition=%ums",
-             s_model.on_off, s_model.brightness, s_model.mireds, s_model.transition_ms);
+    ESP_LOGI(TAG, "Restored: on=%d brightness=%u %uK (%u mireds) transition=%ums",
+             s_model.on_off, s_model.brightness, s_model.kelvin,
+             kelvin_to_mireds(s_model.kelvin), s_model.transition_ms);
 }
 
 void light_model_set_change_cb(light_change_cb_t cb)
@@ -293,10 +341,21 @@ void light_model_set_brightness(uint8_t level)
     xSemaphoreGive(s_lock);
 }
 
-void light_model_adjust_brightness(int8_t detents)
+void light_model_adjust_brightness(int8_t detents, uint8_t accel)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    int level = (int)s_model.brightness + ((int)detents * LM_BRIGHTNESS_STEP);
+    /* Step in percent of the value the screen shows, then convert back to a
+     * ZCL level with ceil(): truncating the other way would swallow every
+     * third percent, because 1% of 254 is 2.54 units. */
+    int level = s_model.brightness ? s_model.brightness : LM_LEVEL_MIN;
+    int pct = level * 100 / LM_LEVEL_MAX;
+    pct += (int)detents * (int)accel * LM_BRIGHTNESS_STEP_PCT;
+    if (pct > 100) {
+        pct = 100;
+    } else if (pct < 0) {
+        pct = 0;
+    }
+    level = (pct * LM_LEVEL_MAX + 99) / 100;
     if (level < LM_LEVEL_MIN) {
         level = LM_LEVEL_MIN;
     } else if (level > LM_LEVEL_MAX) {
@@ -319,30 +378,32 @@ void light_model_set_color_temp(uint16_t mireds)
         mireds = LM_CT_MAX_MIREDS;
     }
 
+    uint16_t kelvin = (uint16_t)mireds_to_kelvin(mireds);
+
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (mireds == s_model.mireds) {
+    if (kelvin == s_model.kelvin) {
         xSemaphoreGive(s_lock);
         return;
     }
-    s_model.mireds = mireds;
+    s_model.kelvin = kelvin;
     model_commit(s_origin);
     xSemaphoreGive(s_lock);
 }
 
-void light_model_adjust_color_temp(int8_t detents)
+void light_model_adjust_color_temp(int8_t detents, uint8_t accel)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    int mireds = (int)s_model.mireds + ((int)detents * LM_CT_STEP_MIREDS);
-    if (mireds < LM_CT_MIN_MIREDS) {
-        mireds = LM_CT_MIN_MIREDS;
-    } else if (mireds > LM_CT_MAX_MIREDS) {
-        mireds = LM_CT_MAX_MIREDS;
+    int kelvin = (int)s_model.kelvin + ((int)detents * (int)accel * LM_CT_STEP_K);
+    if (kelvin < LM_CT_MIN_K) {
+        kelvin = LM_CT_MIN_K;
+    } else if (kelvin > LM_CT_MAX_K) {
+        kelvin = LM_CT_MAX_K;
     }
-    if (mireds == s_model.mireds) {
+    if (kelvin == (int)s_model.kelvin) {
         xSemaphoreGive(s_lock);
         return;
     }
-    s_model.mireds = (uint16_t)mireds;
+    s_model.kelvin = (uint16_t)kelvin;
     model_commit(s_origin);
     xSemaphoreGive(s_lock);
 }
@@ -426,7 +487,8 @@ void light_model_get(light_state_t *out)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     out->on_off = s_model.on_off;
     out->brightness = model_effective_level();
-    out->color_temp_mireds = s_model.mireds;
+    out->color_temp_mireds = kelvin_to_mireds(s_model.kelvin);
+    out->color_temp_kelvin = s_model.kelvin;
     xSemaphoreGive(s_lock);
 }
 
@@ -449,7 +511,7 @@ uint8_t light_model_get_brightness(void)
 uint16_t light_model_get_color_temp(void)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    uint16_t mireds = s_model.mireds;
+    uint16_t mireds = kelvin_to_mireds(s_model.kelvin);
     xSemaphoreGive(s_lock);
     return mireds;
 }

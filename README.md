@@ -34,15 +34,17 @@ smooth fade (default transition 200 ms).
 
 ## Controls
 
-- **Click** (< 400 ms) — power on/off
-- **Rotate** — brightness (step 8/254)
-- **Hold + rotate** — colour temperature (mireds 154..333)
-- **Hold 1.5 s** (no rotation) — settings menu
+- **Rotate** — adjust the active parameter (brightness by default)
+- **Click** (< 500 ms) — power on/off
+- **Double click** — open / close the settings menu
+- **Hold + release** (~0.5–5 s) — toggle the active parameter: brightness ↔ CCT
 - **Hold 5 s** — factory reset (settings + Zigbee network)
 - Zigbee **identify** — blinks the strip for the requested time
 
-Turning or adjusting while off switches the light on first, then applies the
-change, matching `MoveToLevelWithOnOff` semantics.
+The active parameter is highlighted on the dial (caption, value and arc of the
+selected side at full opacity, the other dimmed). Turning or adjusting while
+off switches the light on first, then applies the change, matching
+`MoveToLevelWithOnOff` semantics.
 
 ## Build & flash
 
@@ -106,21 +108,17 @@ One dial split into two halves on the 240×240 GC9A01:
 
 - top arc — colour temperature, value in K
 - bottom arc — brightness, value in %
-- center — both values while idle
+- the side matching the active adjust mode is highlighted, the other is dimmed
 
 Screens:
 
-- **main** — both scales, both readouts
-- **brightness** — rotate to focus; the temperature scale fades out and the
-  brightness value is shown large in the middle
-- **colour temperature** — hold and rotate to focus; the brightness scale fades
-  out and the value in K is shown large
+- **main** — both scales, both readouts, active-mode highlight
 - **off** — `OFF` plus the current time and date
-- **menu** — entered with a 1.5 s hold; navigation is in place, the list itself
-  is empty (presets, settings reset and timezone are the planned items)
+- **menu** — entered / left with a double click; navigation events are in
+  place, the list itself is empty (presets, settings reset and timezone are
+  the planned items)
 
-Dial values and screen changes are animated (150–200 ms), and focus returns to
-the main screen 3 s after the last adjustment.
+Dial values and screen changes are animated (60–200 ms).
 
 ## Notes / limitations
 
@@ -133,5 +131,6 @@ the main screen 3 s after the last adjustment.
   reboots to allow clean re-pairing.
 - No OTA / MQTT / Home Assistant auto-discovery is implemented (out of scope).
 - The timezone is fixed at UTC+3 until the menu provides a way to change it.
-- The menu is a foundation only: navigation events are handled, but there is
-  nothing to navigate yet.
+- The menu is a foundation only: double click enters/leaves it, rotation and
+  click inside it are reserved for future navigation, but there is nothing to
+  navigate yet.

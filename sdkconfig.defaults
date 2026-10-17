@@ -19,7 +19,14 @@ CONFIG_ESP_SYSTEM_USE_FRAME_POINTER=y
 # --- LVGL ---
 # The lvgl__lvgl port builds from Kconfig (CONFIG_LV_CONF_SKIP is on by
 # default), so fonts and widgets are selected here rather than in lv_conf.h.
+# LVGL only redraws dirty areas (and steps animations) once per this period,
+# so 30 ms is a very visible lag when the encoder is spun quickly.
+CONFIG_LV_DISP_DEF_REFR_PERIOD=10
 CONFIG_LV_COLOR_DEPTH_16=y
+# LVGL stores RGB565 little-endian, but the GC9A01 SPI panel wants the high
+# byte first. Without this the background 0x0e1116 is sent as 0x0076 and the
+# panel reads it as 0x7600, which renders the whole screen yellow/olive.
+CONFIG_LV_COLOR_16_SWAP=y
 CONFIG_LV_MEM_SIZE_KILOBYTES=48
 
 # Fonts used by the UI: dim captions, default text, and the two big readouts.

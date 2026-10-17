@@ -50,19 +50,39 @@
  */
 #define ENC_COUNTS_PER_DETENT  1
 
-#define BTN_DEBOUNCE_MS        15      /* contact debounce             */
-#define BTN_CLICK_MAX_MS       400     /* press shorter than this = click */
-#define BTN_MENU_HOLD_MS       1500    /* held without rotating = menu  */
-#define BTN_RESET_HOLD_MS      5000    /* held this long = factory reset */
+/* Rotation speed tiers, in detents per second (smoothed over a few
+ * samples). Each tier below multiplies the value change per detent, so a
+ * slow turn stays precise while a fast turn sweeps the range. Between
+ * ENC_RATE_T4 and the pause threshold the multiplier is ENC_ACCEL_MAX.
+ */
+#define ENC_RATE_T1            8
+#define ENC_RATE_T2            20
+#define ENC_RATE_T3            45
+#define ENC_RATE_T4            90
+#define ENC_ACCEL_MAX          16      /* multiplier at ENC_RATE_T4+      */
+#define ENC_RATE_RESET_MS      300     /* pause that drops the rate to 0  */
+
+#define BTN_DEBOUNCE_MS          15      /* contact debounce                */
+#define BTN_MODE_HOLD_MS         500     /* hold+release: toggle adjust mode*/
+#define BTN_DOUBLE_CLICK_WINDOW_MS 350    /* two clicks within this = dblclk */
+#define BTN_RESET_HOLD_MS        5000    /* held this long = factory reset  */
 
 /* ------------------------------------------------------------------ */
 /* Light model                                                         */
 /* ------------------------------------------------------------------ */
 #define LM_LEVEL_MAX           254     /* ZCL: 0..254                   */
 #define LM_LEVEL_MIN           1
-#define LM_BRIGHTNESS_STEP     8       /* per detent, ZCL level units   */
-#define LM_CT_STEP_MIREDS      8       /* per detent, hold+rotate       */
+/* Value change per detent at accel 1. Brightness is stepped in percent of
+ * the displayed value, then converted back to a ZCL level with ceil(), so
+ * the screen always moves by exactly LM_BRIGHTNESS_STEP_PCT. */
+#define LM_BRIGHTNESS_STEP_PCT 1
+#define LM_CT_STEP_K           10      /* kelvin per detent, CCT mode    */
 
+/* Colour temperature range. The model stores kelvin; mireds only appear at
+ * the ZCL / HA / NVS boundary, where LM_CT_MIN_MIREDS is the cold end and
+ * LM_CT_MAX_MIREDS the warm one. */
+#define LM_CT_MIN_K            3000    /* warm                          */
+#define LM_CT_MAX_K            6500    /* cold                          */
 #define LM_CT_MIN_MIREDS       154     /* 6500 K, cold                 */
 #define LM_CT_MAX_MIREDS       333     /* 3000 K, warm                 */
 
@@ -77,18 +97,20 @@
 /* ------------------------------------------------------------------ */
 #define LCD_H_RES              240
 #define LCD_V_RES              240
-#define LCD_DRAW_BUF_LINES     15
+/* One draw buffer stripe, in rows. 60 rows is 28800 bytes, just under the
+ * 32768 byte DMA limit of the ESP32-C6, so a stripe goes out in a single
+ * transaction and a full frame costs 4 flushes instead of 16. */
+#define LCD_DRAW_BUF_LINES     60
 
-/* GC9A01 panels are shipped in both polarities. Set to 1 if the colours
- * look inverted (red and blue swapped). */
-#define LCD_INVERT_COLOR       0
-
-/* Focus a single scale when a value changes, then fall back after this */
-#define UI_FOCUS_TIMEOUT_MS    3000
+/* The GC9A01 init sequence in the IDF component never sends INVON, so the
+ * panel boots in INVOFF and shows every colour as its photo-negative: a
+ * black background comes out white and light text comes out black. INVON is
+ * required for this IPS glass (the component's own test app enables it). */
+#define LCD_INVERT_COLOR       1
 
 /* Duration of every UI animation, ms */
-#define UI_ANIM_FAST_MS        150     /* value / digit changes         */
-#define UI_ANIM_SCREEN_MS      200     /* screen and element fades     */
+#define UI_ANIM_FAST_MS      60      /* value / digit changes         */
+#define UI_ANIM_SCREEN_MS    200     /* screen and element fades     */
 
 /* ------------------------------------------------------------------ */
 /* Clock                                                               */
