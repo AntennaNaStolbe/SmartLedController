@@ -63,7 +63,7 @@
 #define ENC_RATE_RESET_MS      300     /* pause that drops the rate to 0  */
 
 #define BTN_DEBOUNCE_MS          15      /* contact debounce                */
-#define BTN_MODE_HOLD_MS         500     /* hold+release: toggle adjust mode*/
+#define BTN_MODE_HOLD_MS         500     /* held this long = toggle mode   */
 #define BTN_DOUBLE_CLICK_WINDOW_MS 350    /* two clicks within this = dblclk */
 #define BTN_RESET_HOLD_MS        5000    /* held this long = factory reset  */
 
@@ -72,11 +72,10 @@
 /* ------------------------------------------------------------------ */
 #define LM_LEVEL_MAX           254     /* ZCL: 0..254                   */
 #define LM_LEVEL_MIN           1
-/* Value change per detent at accel 1. Brightness is stepped in percent of
- * the displayed value, then converted back to a ZCL level with ceil(), so
- * the screen always moves by exactly LM_BRIGHTNESS_STEP_PCT. */
-#define LM_BRIGHTNESS_STEP_PCT 1
-#define LM_CT_STEP_K           10      /* kelvin per detent, CCT mode    */
+/* Value change per detent at accel 1, in percent of the full range. One
+ * constant drives both brightness and CCT so a detent always moves the
+ * displayed value by the same fraction, whatever is being adjusted. */
+#define LM_STEP_PCT            1
 
 /* Colour temperature range. The model stores kelvin; mireds only appear at
  * the ZCL / HA / NVS boundary, where LM_CT_MIN_MIREDS is the cold end and

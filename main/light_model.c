@@ -349,7 +349,7 @@ void light_model_adjust_brightness(int8_t detents, uint8_t accel)
      * third percent, because 1% of 254 is 2.54 units. */
     int level = s_model.brightness ? s_model.brightness : LM_LEVEL_MIN;
     int pct = level * 100 / LM_LEVEL_MAX;
-    pct += (int)detents * (int)accel * LM_BRIGHTNESS_STEP_PCT;
+    pct += (int)detents * (int)accel * LM_STEP_PCT;
     if (pct > 100) {
         pct = 100;
     } else if (pct < 0) {
@@ -393,12 +393,18 @@ void light_model_set_color_temp(uint16_t mireds)
 void light_model_adjust_color_temp(int8_t detents, uint8_t accel)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    int kelvin = (int)s_model.kelvin + ((int)detents * (int)accel * LM_CT_STEP_K);
-    if (kelvin < LM_CT_MIN_K) {
-        kelvin = LM_CT_MIN_K;
-    } else if (kelvin > LM_CT_MAX_K) {
-        kelvin = LM_CT_MAX_K;
+    /* Same percentage-of-range stepping as brightness: one detent moves the
+     * value by LM_STEP_PCT of the CCT span (35 K at the default 3000..6500
+     * range), so both dials feel identical under the hand. */
+    int span = LM_CT_MAX_K - LM_CT_MIN_K;
+    int pct = ((int)s_model.kelvin - LM_CT_MIN_K) * 100 / span;
+    pct += (int)detents * (int)accel * LM_STEP_PCT;
+    if (pct > 100) {
+        pct = 100;
+    } else if (pct < 0) {
+        pct = 0;
     }
+    int kelvin = LM_CT_MIN_K + (pct * span) / 100;
     if (kelvin == (int)s_model.kelvin) {
         xSemaphoreGive(s_lock);
         return;

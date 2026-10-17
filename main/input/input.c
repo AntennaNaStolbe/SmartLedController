@@ -28,7 +28,7 @@ static input_handler_t s_handler;
 /* button state */
 static bool s_btn_level;         /* debounced level, true = pressed */
 static bool s_btn_down;          /* press already registered        */
-static bool s_rotated_during_hold; /* rotation consumed while held   */
+static bool s_mode_fired;        /* hold threshold already hit      */
 static bool s_factory_fired;
 static uint32_t s_btn_down_ms;
 static uint32_t s_btn_stable_ms;
@@ -121,11 +121,9 @@ static void enc_poll(void)
     uint8_t accel = update_rate(steps > 0 ? steps : -steps);
 
     /* Rotation while the button is held is swallowed: the old hold+rotate
-     * gesture is gone, and eating it keeps an accidental twitch from
-     * cancelling the mode toggle that fires on release. A pending single
-     * click is dropped too - the user is clearly adjusting, not clicking. */
+     * gesture is gone. A pending single click is dropped too - the user is
+     * clearly adjusting, not clicking. */
     if (s_btn_down) {
-        s_rotated_during_hold = true;
         s_pending_single = false;
         return;
     }
@@ -152,27 +150,16 @@ static void btn_poll(void)
         if (!s_btn_down) {
             s_btn_down = true;
             s_btn_down_ms = now_ms;
-            s_rotated_during_hold = false;
+            s_mode_fired = false;
             s_factory_fired = false;
             emit(INPUT_EV_BTN_DOWN, 0, 1);
         }
     } else if (s_btn_down) {
-        uint32_t held = now_ms - s_btn_down_ms;
         s_btn_down = false;
-
-        if (s_factory_fired) {
+        /* The hold gesture already fired while the button was down; the
+         * release only has to cancel a click that preceded the hold. */
+        if (s_mode_fired || s_factory_fired) {
             s_pending_single = false;
-            return;
-        }
-
-        if (held >= BTN_MODE_HOLD_MS) {
-            /* Hold+release: toggle brightness <-> CCT. A click that came in
-             * just before the hold is cancelled so it cannot also fire. */
-            s_pending_single = false;
-            if (!s_rotated_during_hold) {
-                ESP_LOGI(TAG, "hold+release -> mode toggle");
-                emit(INPUT_EV_MODE_TOGGLE, 0, 1);
-            }
             return;
         }
 
@@ -191,6 +178,12 @@ static void btn_poll(void)
 
     if (s_btn_down) {
         uint32_t held = now_ms - s_btn_down_ms;
+        if (!s_mode_fired && held >= BTN_MODE_HOLD_MS) {
+            s_mode_fired = true;
+            s_pending_single = false;
+            ESP_LOGI(TAG, "hold -> mode toggle");
+            emit(INPUT_EV_MODE_TOGGLE, 0, 1);
+        }
         if (!s_factory_fired && held >= BTN_RESET_HOLD_MS) {
             s_factory_fired = true;
             s_pending_single = false;

@@ -37,7 +37,7 @@ smooth fade (default transition 200 ms).
 - **Rotate** — adjust the active parameter (brightness by default)
 - **Click** (< 500 ms) — power on/off
 - **Double click** — open / close the settings menu
-- **Hold + release** (~0.5–5 s) — toggle the active parameter: brightness ↔ CCT
+- **Hold** (≥ 0.5 s) — toggle the active parameter: brightness ↔ CCT
 - **Hold 5 s** — factory reset (settings + Zigbee network)
 - Zigbee **identify** — blinks the strip for the requested time
 

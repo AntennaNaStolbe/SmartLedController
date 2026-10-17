@@ -66,7 +66,7 @@ static volatile bool s_refresh_pending;
 static ui_screen_t s_screen = UI_SCREEN_OFF;
 
 /* Which parameter the encoder adjusts: false = brightness (default),
- * true = colour temperature. Toggled by hold+release (INPUT_EV_MODE_TOGGLE). */
+ * true = colour temperature. Toggled by a hold (INPUT_EV_MODE_TOGGLE). */
 static bool s_adjust_color_temp;
 
 /* main group */
