@@ -21,3 +21,6 @@ dependencies.lock
 
 # macOS
 .DS_Store
+
+# Local firmware dumps / build artefacts
+*.bin
