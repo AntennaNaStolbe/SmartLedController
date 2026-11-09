@@ -15,6 +15,9 @@
  *   double click       -> INPUT_EV_DOUBLE_CLICK    open / close menu
  *   hold (>= 0.5 s)    -> INPUT_EV_MODE_TOGGLE     brightness <-> CCT
  *   hold 5 s           -> INPUT_EV_FACTORY         factory reset
+ *
+ * While the menu screen is open the UI remaps these: rotate moves the
+ * selection and a single click runs the highlighted item.
  */
 typedef enum {
     INPUT_EV_ROTATE,       /* rotary detent                              */

@@ -30,7 +30,8 @@ static void report_state_alarm_cb(uint8_t arg)
 static void request_time_alarm_cb(uint8_t arg)
 {
     (void)arg;
-    zb_request_time_sync();
+    /* Runs in the Zigbee task, so the stack lock is already held. */
+    zb_request_time_sync_now();
 }
 
 static void on_joined(void)
@@ -215,10 +216,38 @@ bool appzb_is_connected(void)
     return (xEventGroupGetBits(s_connected_group) & CONNECTED_BIT) != 0;
 }
 
-void appzb_factory_reset(void)
+static void factory_reset_alarm_cb(uint8_t arg)
 {
+    (void)arg;
+    /* Runs in the Zigbee task: the Zigbee APIs below need the stack lock. */
     ESP_LOGW(TAG, "Factory reset: clearing settings and Zigbee network");
     storage_factory_reset();
     esp_zb_factory_reset();
     esp_restart();
+}
+
+void appzb_factory_reset(void)
+{
+    /* Wipe both the stored settings and the Zigbee network, then reboot. The
+     * work is handed to the Zigbee task because the SDK is not thread safe. */
+    esp_zb_scheduler_alarm(factory_reset_alarm_cb, 0, 0);
+}
+
+static void pair_alarm_cb(uint8_t arg)
+{
+    (void)arg;
+    /* Runs in the Zigbee task. Reset only the Zigbee network (the light
+     * settings survive), which makes the next boot factory-new and starts
+     * network steering so the device can join again. */
+    ESP_LOGW(TAG, "Pairing: leaving network and restarting to steer");
+    esp_zb_factory_reset();
+    esp_restart();
+}
+
+void appzb_start_pairing(void)
+{
+    /* Clear the Zigbee network and reboot; on boot the stack is factory-new
+     * and the DEVICE_FIRST_START path runs network steering. Local settings
+     * (brightness, CCT, timezone) are left untouched. */
+    esp_zb_scheduler_alarm(pair_alarm_cb, 0, 0);
 }

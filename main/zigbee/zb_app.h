@@ -20,3 +20,7 @@ void zb_request_time_sync(void);
 
 /* Wipe the Zigbee network and the stored settings, then reboot. */
 void appzb_factory_reset(void);
+
+/* Factory-reset the Zigbee network only (keeping the light settings) and
+ * reboot so the device can be paired again. */
+void appzb_start_pairing(void);

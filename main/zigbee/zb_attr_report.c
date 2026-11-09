@@ -1,5 +1,6 @@
 #include "esp_log.h"
 #include "esp_zigbee_core.h"
+#include "freertos/FreeRTOS.h"
 
 #include "light_model.h"
 #include "time/clock.h"
@@ -53,13 +54,23 @@ void zb_attr_report_current_state(void)
 
 void zb_report_local_state(void)
 {
-    /* Invoked from the light model worker, debounced. Only fires when the
+    /* Invoked from the light model worker task, debounced. Only fires when the
      * coordinator is reachable; the shadow attributes are kept in sync by the
      * next join-time report otherwise. */
+    if (!appzb_is_connected()) {
+        return;
+    }
+
+    /* The Zigbee SDK is not thread safe: any call from outside the Zigbee
+     * task has to hold the stack lock. */
+    if (!esp_zb_lock_acquire(portMAX_DELAY)) {
+        return;
+    }
     zb_attr_report_current_state();
+    esp_zb_lock_release();
 }
 
-void zb_request_time_sync(void)
+void zb_request_time_sync_now(void)
 {
     if (!appzb_is_connected()) {
         return;
@@ -84,4 +95,18 @@ void zb_request_time_sync(void)
     esp_zb_zcl_read_attr_cmd_req(&read_cmd);
 
     ESP_LOGD(TAG, "requested the Time attribute");
+}
+
+void zb_request_time_sync(void)
+{
+    /* Called from the clock resync timer (esp_timer task), so take the lock;
+     * the join-time request runs in the Zigbee task and uses the *_now form. */
+    if (!appzb_is_connected()) {
+        return;
+    }
+    if (!esp_zb_lock_acquire(portMAX_DELAY)) {
+        return;
+    }
+    zb_request_time_sync_now();
+    esp_zb_lock_release();
 }

@@ -92,6 +92,20 @@ static lv_obj_t *s_lbl_menu_title;
 static lv_obj_t *s_lbl_menu_items;
 static lv_obj_t *s_lbl_menu_hint;
 
+/* Menu entries. Rotate moves the selection, a single click runs the action,
+ * a double click leaves the menu. */
+typedef struct {
+    const char *label;
+    void (*action)(void);
+} ui_menu_item_t;
+
+static const ui_menu_item_t s_menu_items[] = {
+    { "PAIR ZIGBEE", appzb_start_pairing },
+};
+#define UI_MENU_ITEM_COUNT (sizeof(s_menu_items) / sizeof(s_menu_items[0]))
+
+static uint8_t s_menu_index;
+
 static lv_timer_t *s_clock_timer;
 
 /* ------------------------------------------------------------------ */
@@ -284,22 +298,30 @@ static void build_off_group(lv_obj_t *scr)
                             48, "no time sync");
 }
 
+static void update_menu_view(void)
+{
+    char buf[160];
+    size_t n = 0;
+    for (size_t i = 0; i < UI_MENU_ITEM_COUNT && n < sizeof(buf); i++) {
+        n += (size_t)snprintf(buf + n, sizeof(buf) - n, "%s%s\n",
+                              i == s_menu_index ? "> " : "  ", s_menu_items[i].label);
+    }
+    if (n > 0 && buf[n - 1] == '\n') {
+        buf[n - 1] = '\0';
+    }
+    lv_label_set_text(s_lbl_menu_items, buf);
+}
+
 static void build_menu_group(lv_obj_t *scr)
 {
-    /* The menu itself is intentionally empty: this is the foundation the
-     * preset editor, settings reset and timezone picker will be built on.
-     * Planned items:
-     *   - brightness presets
-     *   - reset to defaults
-     *   - timezone offset (CLOCK_DEFAULT_TZ_OFFSET_S in config.h)
-     */
     s_grp_menu = make_layer(scr);
     s_lbl_menu_title = make_label(s_grp_menu, &lv_font_montserrat_16, lv_color_hex(UI_COLOR_DIM),
                                   -56, "MENU");
     s_lbl_menu_items = make_label(s_grp_menu, &lv_font_montserrat_20, lv_color_hex(UI_COLOR_TEXT),
-                                  -6, "empty");
+                                  -6, "");
     s_lbl_menu_hint = make_label(s_grp_menu, &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM),
-                                 52, "double click to exit");
+                                 52, "rotate / click, double = exit");
+    update_menu_view();
 }
 
 /* ------------------------------------------------------------------ */
@@ -480,7 +502,10 @@ static void apply_event(const input_event_t *ev)
     switch (ev->kind) {
     case INPUT_EV_ROTATE:
         if (s_screen == UI_SCREEN_MENU) {
-            /* Menu navigation is wired up but has nothing to navigate yet. */
+            int count = (int)UI_MENU_ITEM_COUNT;
+            int idx = ((int)s_menu_index + ev->detents) % count;
+            s_menu_index = (uint8_t)((idx + count) % count);
+            update_menu_view();
             break;
         }
         if (!light_model_is_on()) {
@@ -511,7 +536,9 @@ static void apply_event(const input_event_t *ev)
 
     case INPUT_EV_BTN_UP:
         if (s_screen == UI_SCREEN_MENU) {
-            /* Reserved for menu item selection. */
+            if (s_menu_index < UI_MENU_ITEM_COUNT && s_menu_items[s_menu_index].action) {
+                s_menu_items[s_menu_index].action();
+            }
             break;
         }
         light_model_toggle_power();
