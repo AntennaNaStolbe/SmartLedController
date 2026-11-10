@@ -8,6 +8,7 @@
 
 #define STORAGE_NS      "appcfg"
 #define STORAGE_KEY     "cfg"
+#define STORAGE_KEY_ROT "rot"
 #define STORAGE_MAGIC   0x53434C54UL /* 'SLCT' */
 #define STORAGE_VERSION 1
 
@@ -128,6 +129,46 @@ void storage_save(const app_settings_t *in)
     }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Failed to save settings: %s", esp_err_to_name(err));
+    }
+    nvs_close(h);
+}
+
+static bool storage_rotation_valid(uint16_t deg)
+{
+    return deg == 0 || deg == 90 || deg == 180 || deg == 270;
+}
+
+uint16_t storage_get_display_rotation(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(STORAGE_NS, NVS_READONLY, &h) != ESP_OK) {
+        return 0;
+    }
+    uint16_t deg = 0;
+    esp_err_t err = nvs_get_u16(h, STORAGE_KEY_ROT, &deg);
+    nvs_close(h);
+    if (err != ESP_OK || !storage_rotation_valid(deg)) {
+        return 0;
+    }
+    return deg;
+}
+
+void storage_set_display_rotation(uint16_t deg)
+{
+    if (!storage_rotation_valid(deg)) {
+        return;
+    }
+    nvs_handle_t h;
+    if (nvs_open(STORAGE_NS, NVS_READWRITE, &h) != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to open NVS namespace for rotation write");
+        return;
+    }
+    esp_err_t err = nvs_set_u16(h, STORAGE_KEY_ROT, deg);
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to save display rotation: %s", esp_err_to_name(err));
     }
     nvs_close(h);
 }

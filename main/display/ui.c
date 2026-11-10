@@ -11,6 +11,7 @@
 #include "display/ui.h"
 #include "input/input.h"
 #include "light_model.h"
+#include "storage.h"
 #include "time/clock.h"
 #include "zigbee/zb_app.h"
 
@@ -93,14 +94,34 @@ static lv_obj_t *s_lbl_menu_items;
 static lv_obj_t *s_lbl_menu_hint;
 
 /* Menu entries. Rotate moves the selection, a single click runs the action,
- * a double click leaves the menu. */
+ * a double click leaves the menu. value is optional and shown next to the
+ * label (used by settings that cycle through a few states). */
 typedef struct {
     const char *label;
     void (*action)(void);
+    const char *(*value)(void);
 } ui_menu_item_t;
 
+static void update_menu_view(void);
+
+static const char *menu_rotation_value(void)
+{
+    static char buf[8];
+    snprintf(buf, sizeof(buf), "%u", (unsigned)display_get_rotation());
+    return buf;
+}
+
+static void menu_action_rotation(void)
+{
+    uint16_t deg = (uint16_t)((display_get_rotation() + 90U) % 360U);
+    display_set_rotation(deg);
+    storage_set_display_rotation(deg);
+    update_menu_view();
+}
+
 static const ui_menu_item_t s_menu_items[] = {
-    { "PAIR ZIGBEE", appzb_start_pairing },
+    { "PAIR ZIGBEE", appzb_start_pairing, NULL },
+    { "ROTATE", menu_action_rotation, menu_rotation_value },
 };
 #define UI_MENU_ITEM_COUNT (sizeof(s_menu_items) / sizeof(s_menu_items[0]))
 
@@ -300,11 +321,22 @@ static void build_off_group(lv_obj_t *scr)
 
 static void update_menu_view(void)
 {
-    char buf[160];
+    char buf[192];
     size_t n = 0;
     for (size_t i = 0; i < UI_MENU_ITEM_COUNT && n < sizeof(buf); i++) {
-        n += (size_t)snprintf(buf + n, sizeof(buf) - n, "%s%s\n",
-                              i == s_menu_index ? "> " : "  ", s_menu_items[i].label);
+        const char *value = s_menu_items[i].value ? s_menu_items[i].value() : NULL;
+        if (value != NULL) {
+            n += (size_t)snprintf(buf + n, sizeof(buf) - n, "%s%s %s\n",
+                                  i == s_menu_index ? "> " : "  ",
+                                  s_menu_items[i].label, value);
+        } else {
+            n += (size_t)snprintf(buf + n, sizeof(buf) - n, "%s%s\n",
+                                  i == s_menu_index ? "> " : "  ",
+                                  s_menu_items[i].label);
+        }
+    }
+    if (n >= sizeof(buf)) {
+        n = sizeof(buf) - 1;
     }
     if (n > 0 && buf[n - 1] == '\n') {
         buf[n - 1] = '\0';

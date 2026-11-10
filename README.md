@@ -37,6 +37,7 @@ smooth fade (default transition 200 ms).
 - **Rotate** — adjust the active parameter (brightness by default)
 - **Click** (< 500 ms) — power on/off
 - **Double click** — open / close the settings menu
+- **Menu → ROTATE** — cycle the display orientation: 0° → 90° → 180° → 270°
 - **Hold** (≥ 0.5 s) — toggle the active parameter: brightness ↔ CCT
 - **Hold 5 s** — factory reset (settings + Zigbee network)
 - Zigbee **identify** — blinks the strip for the requested time
@@ -102,6 +103,11 @@ color_temp range to 154–333 in its device configuration.
 On/off, brightness, CCT and transition time are saved to NVS (debounced 500 ms,
 FNV-1a checksum + version guard). `StartUpOnOff` defaults to "previous state".
 
+The display orientation is stored separately in NVS (key `rot` in the same
+`appcfg` namespace) so the settings blob layout stays unchanged. It is applied
+during `display_init()` before the first frame, and a factory reset clears it
+back to 0°.
+
 ## UI
 
 One dial split into two halves on the 240×240 GC9A01:
@@ -114,9 +120,9 @@ Screens:
 
 - **main** — both scales, both readouts, active-mode highlight
 - **off** — `OFF` plus the current time and date
-- **menu** — entered / left with a double click; navigation events are in
-  place, the list itself is empty (presets, settings reset and timezone are
-  the planned items)
+- **menu** — entered / left with a double click; rotate moves the selection
+  and a click runs the item. Current items: `PAIR ZIGBEE` and `ROTATE`
+  (cycles the display orientation 0/90/180/270 and saves it).
 
 Dial values and screen changes are animated (60–200 ms).
 
@@ -131,6 +137,6 @@ Dial values and screen changes are animated (60–200 ms).
   reboots to allow clean re-pairing.
 - No OTA / MQTT / Home Assistant auto-discovery is implemented (out of scope).
 - The timezone is fixed at UTC+3 until the menu provides a way to change it.
-- The menu is a foundation only: double click enters/leaves it, rotation and
-  click inside it are reserved for future navigation, but there is nothing to
-  navigate yet.
+- The display can be mounted in any of four orientations; use the `ROTATE`
+  menu item. The orientation is a panel MADCTL change only, so the 240×240
+  resolution and draw buffers are unaffected.
