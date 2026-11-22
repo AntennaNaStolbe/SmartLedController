@@ -24,6 +24,7 @@ static bool s_tag_received = false;
 static uint16_t s_element_tag = 0;
 static uint32_t s_expected_size = 0;
 static uint32_t s_received = 0;
+static uint32_t s_written = 0;
 static bool s_in_progress = false;
 
 static void zb_ota_reset(void)
@@ -34,6 +35,7 @@ static void zb_ota_reset(void)
     s_element_tag = 0;
     s_expected_size = 0;
     s_received = 0;
+    s_written = 0;
     s_in_progress = false;
 }
 
@@ -49,7 +51,7 @@ static void zb_zdo_match_desc_cb(esp_zb_zdp_status_t status, uint16_t addr, uint
     ESP_LOGI(TAG, "OTA server found: short addr 0x%04x, endpoint %u", addr, endpoint);
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_zb_ota_upgrade_client_query_interval_set(
         HA_ESP_LIGHT_ENDPOINT, OTA_QUERY_INTERVAL_MIN));
-    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_zb_ota_upgrade_client_query_image_req(endpoint, (uint8_t)addr));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_zb_ota_upgrade_client_query_image_req(addr, (uint8_t)endpoint));
 }
 
 static void zb_ota_match_server(void)
@@ -137,7 +139,7 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
             ret = ESP_ERR_INVALID_SIZE;
             break;
         }
-        ret = esp_ota_begin(s_ota_partition, s_expected_size, &s_ota_handle);
+        ret = esp_ota_begin(s_ota_partition, 0, &s_ota_handle);
         if (ret == ESP_OK) {
             s_in_progress = true;
         }
@@ -146,6 +148,9 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
     case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_RECEIVE: {
         const void *payload = NULL;
         uint16_t payload_size = 0;
+        s_received += msg->payload_size;
+        ESP_LOGD(TAG, "OTA receive: block %u, total %lu / %lu",
+                 msg->payload_size, (unsigned long)s_received, (unsigned long)s_expected_size);
         ret = zb_ota_extract_payload(msg, &payload, &payload_size);
         if (ret != ESP_OK) {
             break;
@@ -153,8 +158,8 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
         if (payload && payload_size) {
             ret = esp_ota_write(s_ota_handle, payload, payload_size);
             if (ret == ESP_OK) {
-                s_received += payload_size;
-                if (s_received % 16384 < payload_size) {
+                s_written += payload_size;
+                if (s_received % 16384 < msg->payload_size) {
                     ESP_LOGI(TAG, "OTA progress: %lu / %lu",
                              (unsigned long)s_received, (unsigned long)s_expected_size);
                 }
@@ -165,9 +170,11 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
 
     case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_CHECK:
         ret = (s_received == s_expected_size) ? ESP_OK : ESP_ERR_INVALID_SIZE;
-        ESP_LOGI(TAG, "OTA check: %s (%lu / %lu)",
+        ESP_LOGI(TAG, "OTA check: %s (%lu / %lu, written %lu)",
                  ret == ESP_OK ? "OK" : "FAILED",
-                 (unsigned long)s_received, (unsigned long)s_expected_size);
+                 (unsigned long)s_received, (unsigned long)s_expected_size,
+                 (unsigned long)s_written);
+        s_tag_received = false;
         break;
 
     case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_APPLY:
