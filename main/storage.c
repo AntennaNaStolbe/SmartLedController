@@ -1,4 +1,3 @@
-#include <stddef.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -7,13 +6,11 @@
 
 #include "storage.h"
 
-#define STORAGE_NS            "appcfg"
-#define STORAGE_KEY           "cfg"
-#define STORAGE_MAGIC         0x53434C54UL /* 'SLCT' */
-#define STORAGE_VERSION       1
-#define STORAGE_ROT_KEY       "disp_rot"
-#define STORAGE_ROT_MAGIC     0x534C5254UL /* 'SLRT' */
-#define STORAGE_ROT_VERSION   1
+#define STORAGE_NS      "appcfg"
+#define STORAGE_KEY     "cfg"
+#define STORAGE_KEY_ROT "rot"
+#define STORAGE_MAGIC   0x53434C54UL /* 'SLCT' */
+#define STORAGE_VERSION 1
 
 static const char *TAG = "storage";
 
@@ -24,32 +21,12 @@ typedef struct {
     uint32_t        check;
 } storage_blob_t;
 
-typedef struct {
-    uint32_t magic;
-    uint32_t version;
-    uint8_t  rotation;
-    uint8_t  reserved[3];
-    uint32_t check;
-} storage_rotation_blob_t;
-
 static uint32_t storage_checksum(const storage_blob_t *b)
 {
     /* FNV-1a over the settings blob (padding neutralised by memset before save) */
     uint32_t h = 2166136261u;
     const uint8_t *p = (const uint8_t *)&b->settings;
     size_t n = sizeof(b->settings);
-    for (size_t i = 0; i < n; i++) {
-        h ^= p[i];
-        h *= 16777619u;
-    }
-    return h;
-}
-
-static uint32_t rotation_checksum(const storage_rotation_blob_t *b)
-{
-    uint32_t h = 2166136261u;
-    const uint8_t *p = (const uint8_t *)b;
-    size_t n = offsetof(storage_rotation_blob_t, check);
     for (size_t i = 0; i < n; i++) {
         h ^= p[i];
         h *= 16777619u;
@@ -156,40 +133,37 @@ void storage_save(const app_settings_t *in)
     nvs_close(h);
 }
 
-uint8_t storage_display_rotation_load(void)
+static bool storage_rotation_valid(uint16_t deg)
+{
+    return deg == 0 || deg == 90 || deg == 180 || deg == 270;
+}
+
+uint16_t storage_get_display_rotation(void)
 {
     nvs_handle_t h;
     if (nvs_open(STORAGE_NS, NVS_READONLY, &h) != ESP_OK) {
         return 0;
     }
-
-    storage_rotation_blob_t b;
-    size_t len = sizeof(b);
-    esp_err_t err = nvs_get_blob(h, STORAGE_ROT_KEY, &b, &len);
+    uint16_t deg = 0;
+    esp_err_t err = nvs_get_u16(h, STORAGE_KEY_ROT, &deg);
     nvs_close(h);
-
-    if (err != ESP_OK || len != sizeof(b) || b.magic != STORAGE_ROT_MAGIC ||
-        b.version != STORAGE_ROT_VERSION || b.check != rotation_checksum(&b)) {
+    if (err != ESP_OK || !storage_rotation_valid(deg)) {
         return 0;
     }
-    return (uint8_t)(b.rotation & 3U);
+    return deg;
 }
 
-void storage_display_rotation_save(uint8_t rotation)
+void storage_set_display_rotation(uint16_t deg)
 {
-    storage_rotation_blob_t b;
-    memset(&b, 0, sizeof(b));
-    b.magic = STORAGE_ROT_MAGIC;
-    b.version = STORAGE_ROT_VERSION;
-    b.rotation = (uint8_t)(rotation & 3U);
-    b.check = rotation_checksum(&b);
-
-    nvs_handle_t h;
-    if (nvs_open(STORAGE_NS, NVS_READWRITE, &h) != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to open NVS namespace for display rotation");
+    if (!storage_rotation_valid(deg)) {
         return;
     }
-    esp_err_t err = nvs_set_blob(h, STORAGE_ROT_KEY, &b, sizeof(b));
+    nvs_handle_t h;
+    if (nvs_open(STORAGE_NS, NVS_READWRITE, &h) != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to open NVS namespace for rotation write");
+        return;
+    }
+    esp_err_t err = nvs_set_u16(h, STORAGE_KEY_ROT, deg);
     if (err == ESP_OK) {
         err = nvs_commit(h);
     }
