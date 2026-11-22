@@ -26,7 +26,7 @@ static const char *TAG = "display";
 
 static esp_lcd_panel_handle_t s_panel;
 static SemaphoreHandle_t s_lv_lock;
-static uint16_t s_rotation;
+static uint8_t s_rotation;
 
 /* esp_lcd_panel_io_spi hands colour data to the DMA engine and returns while
  * the transfer is still running, so the source buffer must not be touched
@@ -56,67 +56,6 @@ static void lcd_wait_idle(uint32_t timeout_ms)
     for (uint32_t waited = 0; waited < timeout_ms * 1000U && !s_color_done; waited += 100) {
         esp_rom_delay_us(100);
     }
-}
-
-static uint16_t rotation_normalize(uint16_t deg)
-{
-    switch (deg) {
-    case 90:
-    case 180:
-    case 270:
-        return deg;
-    default:
-        return 0;
-    }
-}
-
-/* The glass on this module is wired mirrored, so the upright orientation is
- * MADCTL with the column mirror set (mirror(true, false)). The other three
- * orientations compose that base correction with a 90 degree step. */
-static void apply_panel_rotation(uint16_t deg)
-{
-    bool swap = false;
-    bool mx = true;
-    bool my = false;
-
-    switch (deg) {
-    case 90:
-        swap = true;  mx = true;  my = true;  break;
-    case 180:
-        swap = false; mx = false; my = true;  break;
-    case 270:
-        swap = true;  mx = false; my = false; break;
-    case 0:
-    default:
-        swap = false; mx = true;  my = false; break;
-    }
-
-    ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(s_panel, swap));
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(s_panel, mx, my));
-    s_rotation = deg;
-}
-
-uint16_t display_get_rotation(void)
-{
-    return s_rotation;
-}
-
-void display_set_rotation(uint16_t deg)
-{
-    deg = rotation_normalize(deg);
-    if (deg == s_rotation) {
-        return;
-    }
-
-    /* A colour transfer may still be draining when LVGL released the lock;
-     * wait for it before touching MADCTL, otherwise the tail of the stripe is
-     * written with the old mapping. */
-    lcd_wait_idle(100);
-    apply_panel_rotation(deg);
-
-    /* The GRAM is remapped immediately, but a full repaint guarantees that
-     * every pixel is regenerated in the new orientation. */
-    lv_obj_invalidate(lv_scr_act());
 }
 
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p)
@@ -188,7 +127,21 @@ static void lvgl_init(void)
     disp_drv.ver_res = LCD_V_RES;
     disp_drv.flush_cb = disp_flush_cb;
     disp_drv.draw_buf = &draw_buf;
+    disp_drv.sw_rotate = 1;
     lv_disp_drv_register(&disp_drv);
+}
+
+uint8_t display_get_rotation(void)
+{
+    return s_rotation;
+}
+
+uint8_t display_rotate_90(void)
+{
+    s_rotation = (uint8_t)((s_rotation + 1U) & 3U);
+    storage_display_rotation_save(s_rotation);
+    lv_disp_set_rotation(NULL, (lv_disp_rot_t)s_rotation);
+    return s_rotation;
 }
 
 void display_lock(void)
@@ -287,9 +240,8 @@ void display_init(void)
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
     /* The glass on this round module is wired mirrored: with MADCTL = 0x00
      * every glyph comes out flipped left-to-right (the dial itself is
-     * symmetric, so only the text gives it away). apply_panel_rotation()
-     * folds that base correction into all four orientations. */
-    apply_panel_rotation(storage_get_display_rotation());
+     * symmetric, so only the text gives it away). */
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(s_panel, true, false));
 #if LCD_INVERT_COLOR
     /* Must be sent before DISPON: the component's init sequence leaves the
      * panel in INVOFF, which shows every colour as its photo-negative. */
@@ -311,6 +263,8 @@ void display_init(void)
     lcd_selftest();
 
     lvgl_init();
+    s_rotation = storage_display_rotation_load();
+    lv_disp_set_rotation(NULL, (lv_disp_rot_t)s_rotation);
     xTaskCreate(lvgl_task, "lvgl", 4096, NULL, 6, NULL);
 
     ESP_LOGI(TAG, "Display ready (%dx%d, %d MHz)", LCD_H_RES, LCD_V_RES,

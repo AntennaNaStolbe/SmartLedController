@@ -7,6 +7,7 @@
 #include "freertos/event_groups.h"
 #include "ha/esp_zigbee_ha_standard.h"
 
+#include "config.h"
 #include "storage.h"
 #include "time/clock.h"
 #include "zb_app.h"
@@ -14,6 +15,7 @@
 #include "zb_attr_report.h"
 #include "zb_clusters_config.h"
 #include "zb_config.h"
+#include "zb_ota.h"
 
 static const char *TAG = "zb_app";
 
@@ -34,6 +36,13 @@ static void request_time_alarm_cb(uint8_t arg)
     zb_request_time_sync_now();
 }
 
+static void ota_query_alarm_cb(uint8_t arg)
+{
+    (void)arg;
+    zb_ota_query_now();
+    esp_zb_scheduler_alarm(ota_query_alarm_cb, 0, OTA_QUERY_INTERVAL_MS);
+}
+
 static void on_joined(void)
 {
     xEventGroupSetBits(s_connected_group, CONNECTED_BIT);
@@ -41,6 +50,7 @@ static void on_joined(void)
     /* Give the coordinator a moment to answer commissioning before asking
      * for the clock, then the clock module keeps us in sync. */
     esp_zb_scheduler_alarm(request_time_alarm_cb, 0, 2000);
+    esp_zb_scheduler_alarm(ota_query_alarm_cb, 0, 3000);
 }
 
 static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
@@ -149,6 +159,11 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
         break;
     }
 
+    case ESP_ZB_CORE_OTA_UPGRADE_VALUE_CB_ID:
+    case ESP_ZB_CORE_OTA_UPGRADE_QUERY_IMAGE_RESP_CB_ID:
+        ret = zb_ota_action_handler(callback_id, message);
+        break;
+
     case ESP_ZB_CORE_REPORT_ATTR_CB_ID: {
         const esp_zb_zcl_report_attr_message_t *rep =
             (const esp_zb_zcl_report_attr_message_t *)message;
@@ -185,6 +200,7 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_device_register(ep_list);
 
     esp_zb_core_action_handler_register(zb_action_handler);
+    zb_ota_init();
     esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
     esp_zb_set_secondary_network_channel_set(ESP_ZB_SECONDARY_CHANNEL_MASK);
 
@@ -250,4 +266,16 @@ void appzb_start_pairing(void)
      * and the DEVICE_FIRST_START path runs network steering. Local settings
      * (brightness, CCT, timezone) are left untouched. */
     esp_zb_scheduler_alarm(pair_alarm_cb, 0, 0);
+}
+
+static void ota_check_alarm_cb(uint8_t arg)
+{
+    (void)arg;
+    zb_ota_query_now();
+}
+
+void appzb_check_ota(void)
+{
+    /* Schedule on the Zigbee task: all stack APIs are single-threaded. */
+    esp_zb_scheduler_alarm(ota_check_alarm_cb, 0, 0);
 }

@@ -34,7 +34,8 @@ smooth fade (default transition 200 ms).
 
 ## Controls
 
-- **Rotate** — adjust the active parameter (brightness by default)
+- **Rotate** — adjust the active parameter (brightness by default); one
+  physical detent is one step
 - **Click** (< 500 ms) — power on/off
 - **Double click** — open / close the settings menu
 - **Menu → ROTATE** — cycle the display orientation: 0° → 90° → 180° → 270°
@@ -68,9 +69,14 @@ re-applied.
 
 ### Partition table
 
-`partitions.csv` reserves an NVS partition plus Zigbee stack storage/frame
-partitions (as required by the esp-zigbee radio) and a 2 MB factory app slot
-(flash is 4 MB).
+`partitions.csv` reserves an NVS partition, an OTA data partition, two 1.25 MB
+OTA app slots and Zigbee stack storage/frame partitions (as required by the
+esp-zigbee radio) on 4 MB flash. There is no `factory` slot: the bootloader
+boots `ota_0`, and OTA writes the next image into `ota_1` (then alternates).
+
+When moving an existing device from the old factory-only layout, erase flash
+(or at least `otadata` at `0x10000`) and flash the initial OTA image at
+`0x20000`. The Zigbee partitions moved, so the device must be paired again.
 
 ## Zigbee pairing
 
@@ -90,23 +96,75 @@ The device also acts as a **Time cluster client** and shows the clock on the
 off screen. It reads UTC from the coordinator on join and every 15 min. The
 timezone offset is the compiled-in fallback of UTC+3 (`CLOCK_DEFAULT_TZ_OFFSET_S`
 in `config.h`); a coordinator-supplied timezone, if present, takes precedence.
-Until the menu exists, the offset cannot be changed on the device.
+There is no timezone setting in the menu yet.
 
 ### external converter
 
-Install `zigbee2mqtt/smart-led-controller.js` via the `external_converters`
-setting, or let zigbee2mqtt pair it as a generic dimmable light and set the
-color_temp range to 154–333 in its device configuration.
+Copy `zigbee2mqtt/smart-led-controller.mjs` to the Zigbee2MQTT add-on data
+directory `external_converters/` (on HAOS:
+`/addon_configs/45df7312_zigbee2mqtt/external_converters/`), then restart the
+add-on. Z2M 2.11+ also requires `advanced.enable_external_js: true`. The
+converter sets `ota: true`, which enables the update entity in Z2M/Home
+Assistant.
+
+### OTA setup in zigbee2mqtt
+
+Add a public OTA override index to `configuration.yaml`:
+
+```yaml
+ota:
+  zigbee_ota_override_index_location: https://github.com/AntennaNaStolbe/SmartLedController/releases/latest/download/index.json
+```
+
+Restart Z2M. The device queries the coordinator's OTA server on join and every
+6 hours. To start an update, use Z2M device → OTA → `Check for updates` /
+`Update`, or the Home Assistant `update` entity. A manual query is also
+available in the device menu (`OTA CHECK`).
+
+OTA settings in `config.h`: `OTA_FILE_VERSION` (bump for every release),
+`OTA_MANUFACTURER=0x1A1A`, `OTA_IMAGE_TYPE=0x0002`, `OTA_HARDWARE_VERSION=0x0001`
+and `OTA_MAX_DATA_SIZE=223`. They must match `zigbee2mqtt/ota/index.json`.
+
+Building and publishing a release:
+
+```bash
+pio run -e smartled-c6
+python3 tools/make_ota.py --base-url https://github.com/AntennaNaStolbe/SmartLedController/releases/latest/download
+
+git tag v0.1.1
+git push origin v0.1.1
+gh release create v0.1.1 \
+  zigbee2mqtt/ota/AntennaNS-SmartLedController.zigbee \
+  --title "v0.1.1" \
+  --notes "Zigbee OTA firmware 0x00010001, manufacturer AntennaNS"
+gh release upload v0.1.1 zigbee2mqtt/ota/index.json
+```
+
+Upload the `.zigbee` file first, then `index.json`. The index must be published
+in a non-draft release, and `fileVersion` must be higher than the version
+running on the device. After OTA, use `Re-interview` in Z2M to refresh metadata.
+
+For faster one-off updates, `tools/fast_ota.py` publishes the Z2M bridge request
+with 64-byte blocks and a 50 ms delay (set `HA_URL` and `HA_TOKEN` first). It
+targets the default Z2M friendly name; pass `--device` if yours differs:
+
+```bash
+python3 tools/fast_ota.py --version v0.1.1 --yes
+python3 tools/fast_ota.py --version v0.1.1 --device 0x1234567890abcdef --dry-run
+```
+
+The manufacturer/image/hardware values in `config.h` and `index.json` must
+match; the image type is deliberately different from SmartDoorBell's `0x0001`.
 
 ## Persistence
 
 On/off, brightness, CCT and transition time are saved to NVS (debounced 500 ms,
 FNV-1a checksum + version guard). `StartUpOnOff` defaults to "previous state".
 
-The display orientation is stored separately in NVS (key `rot` in the same
-`appcfg` namespace) so the settings blob layout stays unchanged. It is applied
-during `display_init()` before the first frame, and a factory reset clears it
-back to 0°.
+Display orientation is stored in a separate NVS key (`rot` in the same `appcfg`
+namespace) so it survives reboot/OTA without changing the settings blob layout.
+It is applied during `display_init()` before the first frame, and factory reset
+clears it back to 0°.
 
 ## UI
 
@@ -120,9 +178,10 @@ Screens:
 
 - **main** — both scales, both readouts, active-mode highlight
 - **off** — `OFF` plus the current time and date
-- **menu** — entered / left with a double click; rotate moves the selection
-  and a click runs the item. Current items: `PAIR ZIGBEE` and `ROTATE`
-  (cycles the display orientation 0/90/180/270 and saves it).
+- **menu** — entered / left with a double click; rotate to choose `PAIR ZIGBEE`,
+  `OTA CHECK` or `ROTATE`, click to run, hold 5 s for a factory reset. `ROTATE`
+  cycles the display through 0°, 90°, 180° and 270° and shows the current
+  angle next to the item.
 
 Dial values and screen changes are animated (60–200 ms).
 
@@ -135,8 +194,10 @@ Dial values and screen changes are animated (60–200 ms).
   (`MoveToLevelWithOnOff` semantics); a write of `0` turns it off.
 - On `LEAVE` (device removed by coordinator) the device factory-resets and
   reboots to allow clean re-pairing.
-- No OTA / MQTT / Home Assistant auto-discovery is implemented (out of scope).
+- Zigbee OTA is implemented; MQTT and Home Assistant auto-discovery are not.
 - The timezone is fixed at UTC+3 until the menu provides a way to change it.
 - The display can be mounted in any of four orientations; use the `ROTATE`
   menu item. The orientation is a panel MADCTL change only, so the 240×240
   resolution and draw buffers are unaffected.
+- OTA requires an explicit Z2M/HA update command; the device's periodic query
+  only checks for availability.

@@ -7,6 +7,7 @@
 #include "light_model.h"
 #include "zb_clusters_config.h"
 #include "zb_config.h"
+#include "zb_ota.h"
 
 static void zcl_string(uint8_t *buf, size_t cap, const char *text)
 {
@@ -88,6 +89,35 @@ static esp_zb_attribute_list_t *slctr_level_cluster(void)
     return cl;
 }
 
+static esp_zb_attribute_list_t *slctr_ota_cluster(void)
+{
+    esp_zb_ota_cluster_cfg_t cfg = {
+        .ota_upgrade_file_version = OTA_FILE_VERSION,
+        .ota_upgrade_manufacturer = OTA_MANUFACTURER,
+        .ota_upgrade_image_type = OTA_IMAGE_TYPE,
+        .ota_min_block_reque = 0,
+        .ota_upgrade_file_offset = ESP_ZB_ZCL_OTA_UPGRADE_FILE_OFFSET_DEF_VALUE,
+        .ota_upgrade_downloaded_file_ver = ESP_ZB_ZCL_OTA_UPGRADE_DOWNLOADED_FILE_VERSION_DEF_VALUE,
+        .ota_image_upgrade_status = ESP_ZB_ZCL_OTA_UPGRADE_IMAGE_STATUS_DEF_VALUE,
+    };
+    memset(cfg.ota_upgrade_server_id, 0xff, sizeof(cfg.ota_upgrade_server_id));
+
+    esp_zb_attribute_list_t *cl = esp_zb_ota_cluster_create(&cfg);
+
+    static esp_zb_zcl_ota_upgrade_client_variable_t client_vars = {
+        .timer_query = ESP_ZB_ZCL_OTA_UPGRADE_QUERY_TIMER_COUNT_DEF,
+        .hw_version = OTA_HARDWARE_VERSION,
+        .max_data_size = OTA_MAX_DATA_SIZE,
+    };
+    static uint16_t ota_server_addr = ESP_ZB_ZCL_OTA_UPGRADE_SERVER_ADDR_DEF_VALUE;
+    static uint8_t ota_server_ep = ESP_ZB_ZCL_OTA_UPGRADE_SERVER_ENDPOINT_DEF_VALUE;
+
+    esp_zb_ota_cluster_add_attr(cl, ESP_ZB_ZCL_ATTR_OTA_UPGRADE_CLIENT_DATA_ID, &client_vars);
+    esp_zb_ota_cluster_add_attr(cl, ESP_ZB_ZCL_ATTR_OTA_UPGRADE_SERVER_ADDR_ID, &ota_server_addr);
+    esp_zb_ota_cluster_add_attr(cl, ESP_ZB_ZCL_ATTR_OTA_UPGRADE_SERVER_ENDPOINT_ID, &ota_server_ep);
+    return cl;
+}
+
 static esp_zb_attribute_list_t *slctr_color_cluster(void)
 {
     esp_zb_color_cluster_cfg_t cfg = {
@@ -125,6 +155,8 @@ esp_zb_cluster_list_t *slctr_clusters_create(void)
     esp_zb_cluster_list_add_color_control_cluster(list, slctr_color_cluster(), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
     /* Client role: we read UTC from the coordinator's Time server. */
     esp_zb_cluster_list_add_time_cluster(list, NULL, ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+    /* Client role: Zigbee OTA updates delivered by zigbee2mqtt. */
+    esp_zb_cluster_list_add_ota_cluster(list, slctr_ota_cluster(), ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
     return list;
 }
 

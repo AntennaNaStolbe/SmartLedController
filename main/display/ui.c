@@ -121,7 +121,8 @@ static void menu_action_rotation(void)
 
 static const ui_menu_item_t s_menu_items[] = {
     { "PAIR ZIGBEE", appzb_start_pairing, NULL },
-    { "ROTATE", menu_action_rotation, menu_rotation_value },
+    { "OTA CHECK",   appzb_check_ota, NULL },
+    { "ROTATE",      menu_action_rotation, menu_rotation_value },
 };
 #define UI_MENU_ITEM_COUNT (sizeof(s_menu_items) / sizeof(s_menu_items[0]))
 
@@ -570,6 +571,7 @@ static void apply_event(const input_event_t *ev)
         if (s_screen == UI_SCREEN_MENU) {
             if (s_menu_index < UI_MENU_ITEM_COUNT && s_menu_items[s_menu_index].action) {
                 s_menu_items[s_menu_index].action();
+                update_menu_view();
             }
             break;
         }

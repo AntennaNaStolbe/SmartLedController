@@ -22,5 +22,9 @@ dependencies.lock
 # macOS
 .DS_Store
 
+# Python caches
+__pycache__/
+*.pyc
+
 # Local firmware dumps / build artefacts
 *.bin

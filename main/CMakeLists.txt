@@ -10,6 +10,7 @@ idf_component_register(
         "zigbee/zb_clusters_config.c"
         "zigbee/zb_attr_handlers.c"
         "zigbee/zb_attr_report.c"
+        "zigbee/zb_ota.c"
         "display/display_init.c"
         "display/ui.c"
     INCLUDE_DIRS

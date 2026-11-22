@@ -22,10 +22,10 @@ bool storage_load(app_settings_t *out);
 
 void storage_save(const app_settings_t *in);
 
-/* Display orientation in degrees: 0, 90, 180 or 270. Stored under its own
- * NVS key so the settings blob layout stays unchanged. */
-uint16_t storage_get_display_rotation(void);
-void storage_set_display_rotation(uint16_t deg);
+/* Display rotation in 90 degree steps (0..3), stored separately so a
+ * rotation change cannot overwrite the debounced light settings. */
+uint8_t storage_display_rotation_load(void);
+void storage_display_rotation_save(uint8_t rotation);
 
 /* Erases the application settings namespace (used by factory reset). */
 void storage_factory_reset(void);

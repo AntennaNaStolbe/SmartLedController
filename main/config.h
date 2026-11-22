@@ -7,8 +7,21 @@
 #define PRODUCT_NAME         "SmartLedController"
 #define MANUFACTURER         "AntennaNS"
 #define MODEL_IDENTIFIER     "SLCTR-C6-CWW"
-#define FW_VERSION           "0.1.0"
-#define FW_DATE_CODE         "20260909"
+#define FW_VERSION           "0.1.1"
+#define FW_DATE_CODE         "20261122"
+
+/* ------------------------------------------------------------------ */
+/* Zigbee OTA upgrade                                                  */
+/* ------------------------------------------------------------------ */
+/* Keep these in sync with tools/make_ota.py and zigbee2mqtt/ota/index.json.
+ * Bump OTA_FILE_VERSION for every release so z2m sees a newer image. */
+#define OTA_QUERY_INTERVAL_MS       (6UL * 60UL * 60UL * 1000UL)
+#define OTA_FILE_VERSION            0x00010001
+#define OTA_MANUFACTURER            0x1A1A
+#define OTA_IMAGE_TYPE              0x0002
+#define OTA_HARDWARE_VERSION        0x0001
+#define OTA_MAX_DATA_SIZE           223
+#define OTA_QUERY_INTERVAL_MIN      (OTA_QUERY_INTERVAL_MS / 60000UL)
 
 /* ------------------------------------------------------------------ */
 /* I/O pins (ESP32-C6 SuperMini)                                       */
@@ -44,11 +57,11 @@
 /* ------------------------------------------------------------------ */
 /* Encoder / gesture timing                                            */
 /* ------------------------------------------------------------------ */
-/* With PCNT_CHANNEL_EDGE_ACTION_INCREASE on A and INVERSE on B, one EC11
- * detent produces a net count of 1, so this is 1. Raise only if a detent
- * has to span more than one count.
+/* The PCNT channel counts both A edges and inverts them by B, so one EC11
+ * detent produces two raw counts. Divide by that here to emit one logical
+ * step per physical click, both in the menu and when adjusting values.
  */
-#define ENC_COUNTS_PER_DETENT  1
+#define ENC_COUNTS_PER_DETENT  2
 
 /* Rotation speed tiers, in detents per second (smoothed over a few
  * samples). Each tier below multiplies the value change per detent, so a
