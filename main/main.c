@@ -1,4 +1,5 @@
 #include "esp_log.h"
+#include "esp_zigbee_trace.h"
 #include "nvs_flash.h"
 
 #include "config.h"
@@ -53,6 +54,8 @@ void app_main(void)
 
     input_init();
 
+    esp_zb_set_trace_level_mask(ESP_ZB_TRACE_LEVEL_DEBUG,
+                                ESP_ZB_TRACE_SUBSYSTEM_OTA | ESP_ZB_TRACE_SUBSYSTEM_ZCL);
     appzb_init();
 
     ESP_LOGI(TAG, "Application started, device is ready for Zigbee pairing");
