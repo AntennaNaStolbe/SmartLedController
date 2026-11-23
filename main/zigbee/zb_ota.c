@@ -26,6 +26,8 @@ static uint32_t s_expected_size = 0;
 static uint32_t s_received = 0;
 static uint32_t s_written = 0;
 static bool s_in_progress = false;
+static uint32_t s_image_size = 0;
+static uint32_t s_file_version = 0;
 
 static void zb_ota_reset(void)
 {
@@ -117,12 +119,14 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
 
     esp_err_t ret = ESP_OK;
     switch (msg->upgrade_status) {
-    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_START:
-        ESP_LOGI(TAG, "OTA start: version 0x%08lx, size %lu",
-                 (unsigned long)msg->ota_header.file_version,
-                 (unsigned long)msg->ota_header.image_size);
+    case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_START: {
+        uint32_t file_version = msg->ota_header.file_version ? msg->ota_header.file_version : s_file_version;
+        uint32_t image_size = msg->ota_header.image_size ? msg->ota_header.image_size : s_image_size;
+        ESP_LOGI(TAG, "OTA start: version 0x%08lx, size %lu (header %lu, cached %lu)",
+                 (unsigned long)file_version, (unsigned long)image_size,
+                 (unsigned long)msg->ota_header.image_size, (unsigned long)s_image_size);
         zb_ota_reset();
-        s_expected_size = msg->ota_header.image_size;
+        s_expected_size = image_size;
         if (s_expected_size == 0) {
             ret = ESP_ERR_INVALID_SIZE;
             break;
@@ -144,6 +148,7 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
             s_in_progress = true;
         }
         break;
+    }
 
     case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_RECEIVE: {
         const void *payload = NULL;
@@ -201,6 +206,8 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
             esp_ota_abort(s_ota_handle);
         }
         zb_ota_reset();
+        s_image_size = 0;
+        s_file_version = 0;
         break;
 
     default:
@@ -221,10 +228,14 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
 static esp_err_t zb_ota_query_resp_handler(const esp_zb_zcl_ota_upgrade_query_image_resp_message_t *msg)
 {
     if (msg->info.status == ESP_ZB_ZCL_STATUS_SUCCESS && msg->query_status == 0x00) {
+        s_file_version = msg->file_version;
+        s_image_size = msg->image_size;
         ESP_LOGI(TAG, "OTA image available: version 0x%08lx, size %lu, server 0x%04x ep %u",
                  (unsigned long)msg->file_version, (unsigned long)msg->image_size,
                  msg->server_addr.u.short_addr, msg->server_endpoint);
     } else {
+        s_file_version = 0;
+        s_image_size = 0;
         ESP_LOGI(TAG, "No OTA image (query status 0x%02x)", msg->query_status);
     }
     return ESP_OK;
