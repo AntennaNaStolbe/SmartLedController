@@ -1,12 +1,12 @@
 [
   {
     "fileName": "AntennaNS-SmartLedController.zigbee",
-    "fileVersion": 65541,
-    "fileSize": 1092466,
+    "fileVersion": 65542,
+    "fileSize": 1092722,
     "url": "https://github.com/AntennaNaStolbe/SmartLedController/releases/latest/download/AntennaNS-SmartLedController.zigbee",
     "imageType": 2,
     "manufacturerCode": 6682,
-    "sha512": "37cecf587eac9605a765639de868586c90d9c336617708b616cdb25d782b09fb043416b269a0bd9e3159e0b032aa204916b9dee7b47f8eb967d12e406f4d5e6c",
+    "sha512": "09af57d0d86a6533e76fa1decc61661259c3b90564744e42974c19dd76f9a0078f753c7c67e7845d42f278695b9277c5eaf698bfedcb0824079b0e22fd1ea6e9",
     "otaHeaderString": "SmartLedController"
   }
 ]

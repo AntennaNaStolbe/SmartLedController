@@ -96,8 +96,8 @@ static esp_zb_attribute_list_t *slctr_ota_cluster(void)
         .ota_upgrade_manufacturer = OTA_MANUFACTURER,
         .ota_upgrade_image_type = OTA_IMAGE_TYPE,
         .ota_min_block_reque = 0,
-        .ota_upgrade_file_offset = 0,
-        .ota_upgrade_downloaded_file_ver = 0,
+        .ota_upgrade_file_offset = ESP_ZB_ZCL_OTA_UPGRADE_FILE_OFFSET_DEF_VALUE,
+        .ota_upgrade_downloaded_file_ver = ESP_ZB_ZCL_OTA_UPGRADE_DOWNLOADED_FILE_VERSION_DEF_VALUE,
         .ota_image_upgrade_status = ESP_ZB_ZCL_OTA_UPGRADE_IMAGE_STATUS_DEF_VALUE,
     };
     memset(cfg.ota_upgrade_server_id, 0xff, sizeof(cfg.ota_upgrade_server_id));

@@ -90,9 +90,10 @@ static esp_err_t zb_ota_extract_payload(const esp_zb_zcl_ota_upgrade_value_messa
         s_element_tag = p[0] | ((uint16_t)p[1] << 8);
         uint32_t element_len = (uint32_t)p[2] | ((uint32_t)p[3] << 8) |
                                ((uint32_t)p[4] << 16) | ((uint32_t)p[5] << 24);
-        if (element_len + OTA_ELEMENT_HEADER_LEN != msg->ota_header.image_size) {
-            ESP_LOGE(TAG, "Unexpected OTA element length %lu (image %lu)",
-                     (unsigned long)element_len, (unsigned long)msg->ota_header.image_size);
+        if (element_len + OTA_ELEMENT_HEADER_LEN != s_expected_size) {
+            ESP_LOGE(TAG, "Unexpected OTA element length %lu (image %lu, header %lu)",
+                     (unsigned long)element_len, (unsigned long)s_expected_size,
+                     (unsigned long)msg->ota_header.image_size);
             return ESP_ERR_INVALID_SIZE;
         }
         s_tag_received = true;
@@ -154,6 +155,11 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
         const void *payload = NULL;
         uint16_t payload_size = 0;
         s_received += msg->payload_size;
+        if (s_received == msg->payload_size) {
+            ESP_LOGI(TAG, "OTA first receive: block %u, header size %lu, expected %lu",
+                     msg->payload_size, (unsigned long)msg->ota_header.image_size,
+                     (unsigned long)s_expected_size);
+        }
         ESP_LOGD(TAG, "OTA receive: block %u, total %lu / %lu",
                  msg->payload_size, (unsigned long)s_received, (unsigned long)s_expected_size);
         ret = zb_ota_extract_payload(msg, &payload, &payload_size);
@@ -165,8 +171,9 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
             if (ret == ESP_OK) {
                 s_written += payload_size;
                 if (s_received % 16384 < msg->payload_size) {
-                    ESP_LOGI(TAG, "OTA progress: %lu / %lu",
-                             (unsigned long)s_received, (unsigned long)s_expected_size);
+                    ESP_LOGI(TAG, "OTA progress: %lu / %lu, written %lu",
+                             (unsigned long)s_received, (unsigned long)s_expected_size,
+                             (unsigned long)s_written);
                 }
             }
         }
@@ -201,7 +208,9 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
 
     case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_ABORT:
     case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_ERROR:
-        ESP_LOGW(TAG, "OTA aborted (status %d)", msg->upgrade_status);
+        ESP_LOGW(TAG, "OTA aborted (status %d), received %lu / %lu, written %lu",
+                 msg->upgrade_status, (unsigned long)s_received, (unsigned long)s_expected_size,
+                 (unsigned long)s_written);
         if (s_in_progress) {
             esp_ota_abort(s_ota_handle);
         }
