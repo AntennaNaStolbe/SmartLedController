@@ -131,13 +131,13 @@ Building and publishing a release:
 pio run -e smartled-c6
 python3 tools/make_ota.py --base-url https://github.com/AntennaNaStolbe/SmartLedController/releases/latest/download
 
-git tag v0.1.8
-git push origin v0.1.8
-gh release create v0.1.8 \
+git tag v0.1.9
+git push origin v0.1.9
+gh release create v0.1.9 \
   zigbee2mqtt/ota/AntennaNS-SmartLedController.zigbee \
-  --title "v0.1.8" \
-  --notes "Zigbee OTA firmware 0x00010008, manufacturer AntennaNS"
-gh release upload v0.1.8 zigbee2mqtt/ota/index.json
+  --title "v0.1.9" \
+  --notes "Zigbee OTA firmware 0x00010009, manufacturer AntennaNS"
+gh release upload v0.1.9 zigbee2mqtt/ota/index.json
 ```
 
 Upload the `.zigbee` file first, then `index.json`. The index must be published
@@ -145,12 +145,12 @@ in a non-draft release, and `fileVersion` must be higher than the version
 running on the device. After OTA, use `Re-interview` in Z2M to refresh metadata.
 
 For faster one-off updates, `tools/fast_ota.py` publishes the Z2M bridge request
-with 64-byte blocks and a 50 ms delay (set `HA_URL` and `HA_TOKEN` first). It
+with 60-byte blocks and a 1 ms delay (set `HA_URL` and `HA_TOKEN` first). It
 targets the default Z2M friendly name; pass `--device` if yours differs:
 
 ```bash
-python3 tools/fast_ota.py --version v0.1.8 --yes
-python3 tools/fast_ota.py --version v0.1.8 --device 0x1234567890abcdef --dry-run
+python3 tools/fast_ota.py --version v0.1.9 --yes
+python3 tools/fast_ota.py --version v0.1.9 --device 0x1234567890abcdef --dry-run
 ```
 
 The manufacturer/image/hardware values in `config.h` and `index.json` must

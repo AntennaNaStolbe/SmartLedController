@@ -50,13 +50,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=64,
+        default=60,
         help="OTA image block size in bytes",
     )
     parser.add_argument(
         "--delay",
         type=int,
-        default=50,
+        default=1,
         help="delay between OTA blocks in milliseconds",
     )
     parser.add_argument(
@@ -86,10 +86,10 @@ def get_firmware_url(args: argparse.Namespace) -> str:
 
 
 def validate(args: argparse.Namespace) -> None:
-    if not 10 <= args.chunk_size <= 100:
-        sys.exit("--chunk-size must be between 10 and 100")
-    if args.delay < 50:
-        sys.exit("--delay must be at least 50")
+    if not 10 <= args.chunk_size <= 60:
+        sys.exit("--chunk-size must be between 10 and 60")
+    if args.delay < 1:
+        sys.exit("--delay must be at least 1")
     if not args.dry_run and not args.ha_url:
         sys.exit("--ha-url or HA_URL is required")
     if not args.dry_run and not args.token:

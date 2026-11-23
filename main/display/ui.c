@@ -1,4 +1,6 @@
+#include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -45,6 +47,14 @@
 #define CENTER_BOT_Y       (18)    /* brightness readout          */
 #define CENTER_CAP2_Y      (46)    /* "BRIGHT"                    */
 
+#define UI_PI              3.14159265358979323846f
+#define CURVED_TIME_RADIUS 88
+#define CURVED_DATE_RADIUS 88
+#define CURVED_TIME_STEP   9
+#define CURVED_DATE_STEP   7
+#define CURVED_TIME_GLYPHS 8
+#define CURVED_DATE_GLYPHS 16
+
 typedef enum {
     UI_SCREEN_MAIN,        /* both scales visible (spec "state 1")     */
     UI_SCREEN_OFF,         /* OFF + clock                              */
@@ -80,6 +90,8 @@ static lv_obj_t *s_lbl_ct;
 static lv_obj_t *s_lbl_br;
 static lv_obj_t *s_lbl_cap_ct;
 static lv_obj_t *s_lbl_cap_br;
+static lv_obj_t *s_time_glyphs[CURVED_TIME_GLYPHS];
+static lv_obj_t *s_date_glyphs[CURVED_DATE_GLYPHS];
 
 /* off group */
 static lv_obj_t *s_grp_off;
@@ -256,7 +268,7 @@ static lv_obj_t *make_arc(lv_obj_t *parent, int16_t start, int16_t end)
 }
 
 static lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font, lv_color_t color,
-                            lv_coord_t y_off, const char *text)
+                             lv_coord_t y_off, const char *text)
 {
     lv_obj_t *lbl = lv_label_create(parent);
     lv_obj_set_style_text_font(lbl, font, 0);
@@ -265,6 +277,68 @@ static lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font, lv_color_t 
     lv_obj_align(lbl, LV_ALIGN_CENTER, 0, y_off);
     lv_label_set_text(lbl, text);
     return lbl;
+}
+
+static void make_curved_glyphs(lv_obj_t *parent, lv_obj_t **glyphs, size_t count,
+                               const lv_font_t *font, lv_color_t color)
+{
+    for (size_t i = 0; i < count; i++) {
+        lv_obj_t *lbl = lv_label_create(parent);
+        lv_obj_set_style_text_font(lbl, font, 0);
+        lv_obj_set_style_text_color(lbl, color, 0);
+        lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_pad_all(lbl, 0, 0);
+        lv_label_set_text(lbl, " ");
+        lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+        glyphs[i] = lbl;
+    }
+}
+
+static void set_curved_text(lv_obj_t **glyphs, size_t count, const char *text,
+                            lv_coord_t radius, int16_t center_deg, int16_t step_deg,
+                            bool reverse)
+{
+    size_t len = strlen(text);
+    if (len > count) {
+        len = count;
+    }
+
+    float mid = len ? (float)(len - 1) / 2.0f : 0.0f;
+
+    for (size_t i = 0; i < count; i++) {
+        if (i >= len) {
+            lv_obj_add_flag(glyphs[i], LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+
+        char ch[2] = {text[i], '\0'};
+        lv_label_set_text(glyphs[i], ch);
+        lv_obj_clear_flag(glyphs[i], LV_OBJ_FLAG_HIDDEN);
+
+        float theta = (center_deg + (reverse ? -1.0f : 1.0f) * ((float)i - mid) * (float)step_deg) * UI_PI / 180.0f;
+        float px = (float)(LCD_H_RES / 2) + radius * cosf(theta);
+        float py = (float)(LCD_V_RES / 2) + radius * sinf(theta);
+
+        lv_coord_t w = lv_obj_get_width(glyphs[i]);
+        lv_coord_t h = lv_obj_get_height(glyphs[i]);
+        lv_obj_set_pos(glyphs[i], (lv_coord_t)lroundf(px - (float)w / 2.0f),
+                       (lv_coord_t)lroundf(py - (float)h / 2.0f));
+        lv_obj_set_style_transform_pivot_x(glyphs[i], w / 2, 0);
+        lv_obj_set_style_transform_pivot_y(glyphs[i], h / 2, 0);
+
+        float tangent;
+        if (reverse) {
+            tangent = atan2f(-cosf(theta), sinf(theta)) * 180.0f / UI_PI;
+        } else {
+            tangent = atan2f(cosf(theta), -sinf(theta)) * 180.0f / UI_PI;
+        }
+        int32_t angle = (int32_t)lroundf(tangent * 10.0f);
+        angle %= 3600;
+        if (angle < 0) {
+            angle += 3600;
+        }
+        lv_obj_set_style_transform_angle(glyphs[i], (lv_coord_t)angle, 0);
+    }
 }
 
 static void build_main_group(lv_obj_t *scr)
@@ -286,6 +360,11 @@ static void build_main_group(lv_obj_t *scr)
                           CENTER_BOT_Y, "--");
     s_lbl_cap_br = make_label(s_layer_br, &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM),
                               CENTER_CAP2_Y, "BRIGHT");
+
+    make_curved_glyphs(s_grp_main, s_time_glyphs, CURVED_TIME_GLYPHS,
+                       &lv_font_montserrat_16, lv_color_hex(UI_COLOR_TEXT));
+    make_curved_glyphs(s_grp_main, s_date_glyphs, CURVED_DATE_GLYPHS,
+                       &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM));
 }
 
 /* Highlight whichever parameter the encoder currently adjusts: the active
@@ -312,11 +391,11 @@ static void update_mode_indicator(void)
 static void build_off_group(lv_obj_t *scr)
 {
     s_grp_off = make_layer(scr);
-    s_lbl_off = make_label(s_grp_off, &lv_font_montserrat_28, lv_color_hex(UI_COLOR_OFF),
-                           -22, "OFF");
-    s_lbl_time = make_label(s_grp_off, &lv_font_montserrat_20, lv_color_hex(UI_COLOR_TEXT),
-                            22, "--:--");
-    s_lbl_date = make_label(s_grp_off, &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM),
+    s_lbl_off = make_label(s_grp_off, &lv_font_montserrat_16, lv_color_hex(UI_COLOR_OFF),
+                           -42, "OFF");
+    s_lbl_time = make_label(s_grp_off, &lv_font_montserrat_40, lv_color_hex(UI_COLOR_TEXT),
+                            0, "--:--");
+    s_lbl_date = make_label(s_grp_off, &lv_font_montserrat_28, lv_color_hex(UI_COLOR_DIM),
                             48, "no time sync");
 }
 
@@ -366,14 +445,18 @@ static void update_clock_labels(void)
     char buf[24];
     clock_get_time_str(buf, sizeof(buf));
     lv_label_set_text(s_lbl_time, buf);
+    set_curved_text(s_time_glyphs, CURVED_TIME_GLYPHS, buf,
+                    CURVED_TIME_RADIUS, 270, CURVED_TIME_STEP, false);
     clock_get_date_str(buf, sizeof(buf));
     lv_label_set_text(s_lbl_date, buf);
+    set_curved_text(s_date_glyphs, CURVED_DATE_GLYPHS, buf,
+                    CURVED_DATE_RADIUS, 90, CURVED_DATE_STEP, true);
 }
 
 static void clock_tick_cb(lv_timer_t *t)
 {
     (void)t;
-    if (s_screen == UI_SCREEN_OFF) {
+    if (s_screen != UI_SCREEN_MENU) {
         update_clock_labels();
     }
 }
@@ -383,8 +466,7 @@ static uint8_t brightness_pct(const light_state_t *st)
     return (uint8_t)((uint32_t)st->brightness * 100UL / LM_LEVEL_MAX);
 }
 
-/* Cold (6500 K) sits at 0 of the arc, warm (3000 K) at 100, matching the
- * mired direction the ZCL side uses. */
+/* Warmer colour (larger mired value) fills less of the arc; colder fills more. */
 static uint8_t color_temp_pct(const light_state_t *st)
 {
     int k = (int)st->color_temp_kelvin;
@@ -393,7 +475,7 @@ static uint8_t color_temp_pct(const light_state_t *st)
     } else if (k > LM_CT_MAX_K) {
         k = LM_CT_MAX_K;
     }
-    return (uint8_t)(((uint32_t)(LM_CT_MAX_K - k) * 100UL) / (LM_CT_MAX_K - LM_CT_MIN_K));
+    return (uint8_t)(((uint32_t)(k - LM_CT_MIN_K) * 100UL) / (LM_CT_MAX_K - LM_CT_MIN_K));
 }
 
 /* Animate both arcs to the current model values. dur decides whether this
@@ -519,7 +601,7 @@ static void refresh_locked(void)
         arc_to(s_arc_ct, color_temp_pct(&st), UI_ANIM_FAST_MS);
     }
 
-    if (s_screen != UI_SCREEN_OFF) {
+    if (s_screen == UI_SCREEN_MAIN) {
         update_clock_labels();
     }
 }
