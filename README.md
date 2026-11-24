@@ -113,28 +113,39 @@ For a fresh installation, do this once:
 
 1. In the Zigbee2MQTT add-on, open **Configuration** and add this to
    `configuration.yaml` (on HAOS the file is
-   `/addon_configs/45df7312_zigbee2mqtt/configuration.yaml`):
+   `/addon_configs/45df7312_zigbee2mqtt/configuration.yaml`). If an `ota:`
+   block already exists, merge these keys into it instead of adding a second
+   one:
 
    ```yaml
    ota:
      zigbee_ota_override_index_location: https://github.com/AntennaNaStolbe/SmartLedController/releases/latest/download/index.json
+     default_maximum_data_size: 100
+     image_block_response_delay: 50
    ```
 
-2. Save and restart only the Zigbee2MQTT add-on. Home Assistant does not need
-   a restart.
+   `default_maximum_data_size: 100` and `image_block_response_delay: 50`
+   make the HA/Z2M **Update** button fast. Without them Z2M defaults to
+   50-byte blocks and a 250 ms delay, so a 1.2 MB image takes over an hour.
+   These settings apply to all Zigbee OTA updates handled by this Z2M
+   instance, not just this lamp. They only affect OTA transfers; devices keep
+   working normally. Some manufacturers force smaller chunks, but the delay
+   still applies.
+
+2. Save and restart only the Zigbee2MQTT add-on. Do not restart Z2M while an
+   update is in progress. Home Assistant does not need a restart.
 3. Pair the lamp. Open the device in Z2M → **OTA** → **Check for updates**.
    If a newer version is found, press **Update**. The same works from the
-   Home Assistant `update` entity.
-4. Updates started from the HA entity are slow: Z2M defaults to 250 ms between
-   blocks and 50-byte chunks, so a 1.2 MB image can take over an hour. Use
-   `tools/fast_ota.py` below to send 100-byte chunks with a 1 ms delay.
-5. After the device reboots, Z2M re-interviews it automatically. If the HA
+   Home Assistant `update` entity. With the settings above, a 1.2 MB image
+   normally finishes in roughly 10–20 minutes instead of over an hour,
+   depending on the mesh.
+4. After the device reboots, Z2M re-interviews it automatically. If the HA
    version still looks stale, use Z2M → **Re-interview**.
 
 `Check for updates` only asks whether an image is available; it does not
-download anything. The download starts only from **Update**, the HA `update`
-entity, or `tools/fast_ota.py`. The device menu has no OTA item because the
-device cannot start the coordinator-side transfer by itself.
+download anything. The download starts only from **Update** or the HA `update`
+entity. The device menu has no OTA item because the device cannot start the
+coordinator-side transfer by itself.
 
 OTA settings in `config.h`: `OTA_FILE_VERSION` (bump for every release),
 `OTA_MANUFACTURER=0x1A1A`, `OTA_IMAGE_TYPE=0x0002`, `OTA_HARDWARE_VERSION=0x0001`
@@ -160,9 +171,16 @@ Upload the `.zigbee` file first, then `index.json`. The index must be published
 in a non-draft release, and `fileVersion` must be higher than the version
 running on the device. After OTA, use `Re-interview` in Z2M to refresh metadata.
 
-For faster one-off updates, `tools/fast_ota.py` publishes the Z2M bridge request
-with 100-byte blocks and a 1 ms delay (set `HA_URL` and `HA_TOKEN` first). It
-targets the default Z2M friendly name; pass `--device` if yours differs:
+### Optional: maximum speed with `tools/fast_ota.py`
+
+The global settings above are enough for normal use. If you want the fastest
+possible one-off update, run `tools/fast_ota.py` on your computer. It does not
+bypass Z2M: it publishes a Z2M bridge request with per-update overrides of
+100-byte blocks and a 1 ms delay. Z2M validation does not allow 1 ms in the
+global config, but it accepts it for a single update request.
+
+Set `HA_URL` and `HA_TOKEN` first. The script targets the default Z2M friendly
+name; pass `--device` if yours differs:
 
 ```bash
 python3 tools/fast_ota.py --version v1.0.1 --yes
