@@ -32,7 +32,7 @@
  * 12 and 6 o'clock so the round line caps do not collide. */
 #define RING_DIAMETER      212
 #define RING_THICKNESS     12
-#define ARC_GAP_DEG        10
+#define ARC_GAP_DEG        60
 #define ARC_TOP_START      (270 + ARC_GAP_DEG / 2)   /* past 12 o'clock     */
 #define ARC_TOP_END        (450 - ARC_GAP_DEG / 2)   /* stops before 6      */
 #define ARC_BOT_START      (90 + ARC_GAP_DEG / 2)    /* past 6 o'clock      */
@@ -48,12 +48,19 @@
 #define CENTER_CAP2_Y      (46)    /* "BRIGHT"                    */
 
 #define UI_PI              3.14159265358979323846f
-#define CURVED_TIME_RADIUS 88
-#define CURVED_DATE_RADIUS 88
-#define CURVED_TIME_STEP   9
-#define CURVED_DATE_STEP   7
+#define CURVED_TIME_RADIUS 100
+#define CURVED_DATE_RADIUS 96
+#define CURVED_OFF_RADIUS  104
+#define CURVED_TIME_STEP   10
+#define CURVED_DATE_STEP   5
+#define CURVED_OFF_STEP    14
 #define CURVED_TIME_GLYPHS 8
 #define CURVED_DATE_GLYPHS 16
+#define CURVED_OFF_GLYPHS  3
+#define CURVED_TIME_CELL_W 12
+#define CURVED_DATE_CELL_W 10
+#define CURVED_OFF_CELL_W  12
+#define CURVED_CELL_H      20
 
 typedef enum {
     UI_SCREEN_MAIN,        /* both scales visible (spec "state 1")     */
@@ -65,6 +72,17 @@ typedef struct {
     uint8_t kind;          /* 0 = refresh, 1 = input event */
     input_event_t ev;
 } ui_cmd_t;
+
+typedef struct {
+    lv_obj_t *glyphs[16];
+    size_t count;
+    lv_coord_t radius;
+    lv_coord_t cell_w;
+    lv_coord_t cell_h;
+    int16_t center_deg;
+    int16_t step_deg;
+    bool reverse;
+} curved_text_t;
 
 #define UI_CMD_REFRESH 0
 #define UI_CMD_EVENT   1
@@ -90,12 +108,12 @@ static lv_obj_t *s_lbl_ct;
 static lv_obj_t *s_lbl_br;
 static lv_obj_t *s_lbl_cap_ct;
 static lv_obj_t *s_lbl_cap_br;
-static lv_obj_t *s_time_glyphs[CURVED_TIME_GLYPHS];
-static lv_obj_t *s_date_glyphs[CURVED_DATE_GLYPHS];
+static curved_text_t s_time_text;
+static curved_text_t s_date_text;
 
 /* off group */
 static lv_obj_t *s_grp_off;
-static lv_obj_t *s_lbl_off;
+static curved_text_t s_off_text;
 static lv_obj_t *s_lbl_time;
 static lv_obj_t *s_lbl_date;
 
@@ -279,55 +297,64 @@ static lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font, lv_color_t 
     return lbl;
 }
 
-static void make_curved_glyphs(lv_obj_t *parent, lv_obj_t **glyphs, size_t count,
-                               const lv_font_t *font, lv_color_t color)
+static void make_curved_text(curved_text_t *text, lv_obj_t *parent, size_t count,
+                             lv_coord_t radius, lv_coord_t cell_w, lv_coord_t cell_h,
+                             int16_t center_deg, int16_t step_deg, bool reverse,
+                             const lv_font_t *font, lv_color_t color)
 {
+    text->count = count;
+    text->radius = radius;
+    text->cell_w = cell_w;
+    text->cell_h = cell_h;
+    text->center_deg = center_deg;
+    text->step_deg = step_deg;
+    text->reverse = reverse;
+
     for (size_t i = 0; i < count; i++) {
         lv_obj_t *lbl = lv_label_create(parent);
+        lv_obj_set_size(lbl, cell_w, cell_h);
         lv_obj_set_style_text_font(lbl, font, 0);
         lv_obj_set_style_text_color(lbl, color, 0);
         lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_pad_all(lbl, 0, 0);
+        lv_obj_set_style_transform_pivot_x(lbl, cell_w / 2, 0);
+        lv_obj_set_style_transform_pivot_y(lbl, cell_h / 2, 0);
         lv_label_set_text(lbl, " ");
         lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
-        glyphs[i] = lbl;
+        text->glyphs[i] = lbl;
     }
 }
 
-static void set_curved_text(lv_obj_t **glyphs, size_t count, const char *text,
-                            lv_coord_t radius, int16_t center_deg, int16_t step_deg,
-                            bool reverse)
+static void set_curved_text(curved_text_t *text, const char *value)
 {
-    size_t len = strlen(text);
-    if (len > count) {
-        len = count;
+    size_t len = strlen(value);
+    if (len > text->count) {
+        len = text->count;
     }
 
     float mid = len ? (float)(len - 1) / 2.0f : 0.0f;
 
-    for (size_t i = 0; i < count; i++) {
+    for (size_t i = 0; i < text->count; i++) {
         if (i >= len) {
-            lv_obj_add_flag(glyphs[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(text->glyphs[i], LV_OBJ_FLAG_HIDDEN);
             continue;
         }
 
-        char ch[2] = {text[i], '\0'};
-        lv_label_set_text(glyphs[i], ch);
-        lv_obj_clear_flag(glyphs[i], LV_OBJ_FLAG_HIDDEN);
+        char ch[2] = {value[i], '\0'};
+        lv_label_set_text(text->glyphs[i], ch);
+        lv_obj_clear_flag(text->glyphs[i], LV_OBJ_FLAG_HIDDEN);
 
-        float theta = (center_deg + (reverse ? -1.0f : 1.0f) * ((float)i - mid) * (float)step_deg) * UI_PI / 180.0f;
-        float px = (float)(LCD_H_RES / 2) + radius * cosf(theta);
-        float py = (float)(LCD_V_RES / 2) + radius * sinf(theta);
+        float theta = (text->center_deg +
+                       (text->reverse ? -1.0f : 1.0f) * ((float)i - mid) * (float)text->step_deg) * UI_PI / 180.0f;
+        float px = (float)(LCD_H_RES / 2) + text->radius * cosf(theta);
+        float py = (float)(LCD_V_RES / 2) + text->radius * sinf(theta);
 
-        lv_coord_t w = lv_obj_get_width(glyphs[i]);
-        lv_coord_t h = lv_obj_get_height(glyphs[i]);
-        lv_obj_set_pos(glyphs[i], (lv_coord_t)lroundf(px - (float)w / 2.0f),
-                       (lv_coord_t)lroundf(py - (float)h / 2.0f));
-        lv_obj_set_style_transform_pivot_x(glyphs[i], w / 2, 0);
-        lv_obj_set_style_transform_pivot_y(glyphs[i], h / 2, 0);
+        lv_obj_set_pos(text->glyphs[i],
+                       (lv_coord_t)lroundf(px - (float)text->cell_w / 2.0f),
+                       (lv_coord_t)lroundf(py - (float)text->cell_h / 2.0f));
 
         float tangent;
-        if (reverse) {
+        if (text->reverse) {
             tangent = atan2f(-cosf(theta), sinf(theta)) * 180.0f / UI_PI;
         } else {
             tangent = atan2f(cosf(theta), -sinf(theta)) * 180.0f / UI_PI;
@@ -337,7 +364,7 @@ static void set_curved_text(lv_obj_t **glyphs, size_t count, const char *text,
         if (angle < 0) {
             angle += 3600;
         }
-        lv_obj_set_style_transform_angle(glyphs[i], (lv_coord_t)angle, 0);
+        lv_obj_set_style_transform_angle(text->glyphs[i], (lv_coord_t)angle, 0);
     }
 }
 
@@ -361,10 +388,14 @@ static void build_main_group(lv_obj_t *scr)
     s_lbl_cap_br = make_label(s_layer_br, &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM),
                               CENTER_CAP2_Y, "BRIGHT");
 
-    make_curved_glyphs(s_grp_main, s_time_glyphs, CURVED_TIME_GLYPHS,
-                       &lv_font_montserrat_16, lv_color_hex(UI_COLOR_TEXT));
-    make_curved_glyphs(s_grp_main, s_date_glyphs, CURVED_DATE_GLYPHS,
-                       &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM));
+    make_curved_text(&s_time_text, s_grp_main, CURVED_TIME_GLYPHS,
+                     CURVED_TIME_RADIUS, CURVED_TIME_CELL_W, CURVED_CELL_H,
+                     270, CURVED_TIME_STEP, false,
+                     &lv_font_montserrat_16, lv_color_hex(UI_COLOR_TEXT));
+    make_curved_text(&s_date_text, s_grp_main, CURVED_DATE_GLYPHS,
+                     CURVED_DATE_RADIUS, CURVED_DATE_CELL_W, CURVED_CELL_H,
+                     90, CURVED_DATE_STEP, true,
+                     &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM));
 }
 
 /* Highlight whichever parameter the encoder currently adjusts: the active
@@ -391,12 +422,15 @@ static void update_mode_indicator(void)
 static void build_off_group(lv_obj_t *scr)
 {
     s_grp_off = make_layer(scr);
-    s_lbl_off = make_label(s_grp_off, &lv_font_montserrat_16, lv_color_hex(UI_COLOR_OFF),
-                           -42, "OFF");
+    make_curved_text(&s_off_text, s_grp_off, CURVED_OFF_GLYPHS,
+                     CURVED_OFF_RADIUS, CURVED_OFF_CELL_W, CURVED_CELL_H,
+                     270, CURVED_OFF_STEP, false,
+                     &lv_font_montserrat_16, lv_color_hex(UI_COLOR_OFF));
+    set_curved_text(&s_off_text, "OFF");
     s_lbl_time = make_label(s_grp_off, &lv_font_montserrat_40, lv_color_hex(UI_COLOR_TEXT),
-                            0, "--:--");
+                            -20, "--:--");
     s_lbl_date = make_label(s_grp_off, &lv_font_montserrat_28, lv_color_hex(UI_COLOR_DIM),
-                            48, "no time sync");
+                            28, "no time sync");
 }
 
 static void update_menu_view(void)
@@ -445,12 +479,10 @@ static void update_clock_labels(void)
     char buf[24];
     clock_get_time_str(buf, sizeof(buf));
     lv_label_set_text(s_lbl_time, buf);
-    set_curved_text(s_time_glyphs, CURVED_TIME_GLYPHS, buf,
-                    CURVED_TIME_RADIUS, 270, CURVED_TIME_STEP, false);
+    set_curved_text(&s_time_text, buf);
     clock_get_date_str(buf, sizeof(buf));
     lv_label_set_text(s_lbl_date, buf);
-    set_curved_text(s_date_glyphs, CURVED_DATE_GLYPHS, buf,
-                    CURVED_DATE_RADIUS, 90, CURVED_DATE_STEP, true);
+    set_curved_text(&s_date_text, buf);
 }
 
 static void clock_tick_cb(lv_timer_t *t)
