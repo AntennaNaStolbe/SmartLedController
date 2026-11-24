@@ -24,6 +24,7 @@ bool clock_is_synced(void);
 /* "HH:MM" and "DD.MM.YYYY" into caller-provided buffers. */
 void clock_get_time_str(char *buf, unsigned len);
 void clock_get_date_str(char *buf, unsigned len);
+void clock_get_short_date_str(char *buf, unsigned len);
 
 /* Called by clock_init on a timer so the Zigbee layer can re-read the Time
  * attribute; wired up from zb_app.c. */

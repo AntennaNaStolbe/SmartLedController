@@ -136,6 +136,19 @@ void clock_get_date_str(char *buf, unsigned len)
     clock_format(buf, len, "%d.%m.%Y");
 }
 
+void clock_get_short_date_str(char *buf, unsigned len)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool synced = s_synced;
+    xSemaphoreGive(s_lock);
+
+    if (!synced) {
+        snprintf(buf, len, "--.--");
+        return;
+    }
+    clock_format(buf, len, "%d.%m");
+}
+
 void clock_set_resync_cb(clock_resync_cb_t cb)
 {
     s_resync_cb = cb;

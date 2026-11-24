@@ -79,6 +79,8 @@ typedef struct {
     lv_coord_t radius;
     lv_coord_t cell_w;
     lv_coord_t cell_h;
+    lv_coord_t box_w;
+    lv_coord_t box_h;
     int16_t center_deg;
     int16_t step_deg;
     bool reverse;
@@ -306,19 +308,21 @@ static void make_curved_text(curved_text_t *text, lv_obj_t *parent, size_t count
     text->radius = radius;
     text->cell_w = cell_w;
     text->cell_h = cell_h;
+    text->box_w = (lv_coord_t)(cell_w + 12);
+    text->box_h = (lv_coord_t)(cell_h + 10);
     text->center_deg = center_deg;
     text->step_deg = step_deg;
     text->reverse = reverse;
 
     for (size_t i = 0; i < count; i++) {
         lv_obj_t *lbl = lv_label_create(parent);
-        lv_obj_set_size(lbl, cell_w, cell_h);
+        lv_obj_set_size(lbl, text->box_w, text->box_h);
         lv_obj_set_style_text_font(lbl, font, 0);
         lv_obj_set_style_text_color(lbl, color, 0);
         lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_pad_all(lbl, 0, 0);
-        lv_obj_set_style_transform_pivot_x(lbl, cell_w / 2, 0);
-        lv_obj_set_style_transform_pivot_y(lbl, cell_h / 2, 0);
+        lv_obj_set_style_transform_pivot_x(lbl, text->box_w / 2, 0);
+        lv_obj_set_style_transform_pivot_y(lbl, text->box_h / 2, 0);
         lv_label_set_text(lbl, " ");
         lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
         text->glyphs[i] = lbl;
@@ -350,8 +354,8 @@ static void set_curved_text(curved_text_t *text, const char *value)
         float py = (float)(LCD_V_RES / 2) + text->radius * sinf(theta);
 
         lv_obj_set_pos(text->glyphs[i],
-                       (lv_coord_t)lroundf(px - (float)text->cell_w / 2.0f),
-                       (lv_coord_t)lroundf(py - (float)text->cell_h / 2.0f));
+                       (lv_coord_t)lroundf(px - (float)text->box_w / 2.0f),
+                       (lv_coord_t)lroundf(py - (float)text->box_h / 2.0f));
 
         float tangent;
         if (text->reverse) {
@@ -430,7 +434,7 @@ static void build_off_group(lv_obj_t *scr)
     s_lbl_time = make_label(s_grp_off, &lv_font_montserrat_40, lv_color_hex(UI_COLOR_TEXT),
                             -20, "--:--");
     s_lbl_date = make_label(s_grp_off, &lv_font_montserrat_28, lv_color_hex(UI_COLOR_DIM),
-                            28, "no time sync");
+                            28, "--.--");
 }
 
 static void update_menu_view(void)
@@ -480,7 +484,7 @@ static void update_clock_labels(void)
     clock_get_time_str(buf, sizeof(buf));
     lv_label_set_text(s_lbl_time, buf);
     set_curved_text(&s_time_text, buf);
-    clock_get_date_str(buf, sizeof(buf));
+    clock_get_short_date_str(buf, sizeof(buf));
     lv_label_set_text(s_lbl_date, buf);
     set_curved_text(&s_date_text, buf);
 }
