@@ -39,7 +39,7 @@ static void request_time_alarm_cb(uint8_t arg)
 static void ota_query_alarm_cb(uint8_t arg)
 {
     (void)arg;
-    zb_ota_query_now();
+    zb_ota_query_now(false);
     esp_zb_scheduler_alarm(ota_query_alarm_cb, 0, OTA_QUERY_INTERVAL_MS);
 }
 
@@ -265,13 +265,13 @@ void appzb_start_pairing(void)
     /* Clear the Zigbee network and reboot; on boot the stack is factory-new
      * and the DEVICE_FIRST_START path runs network steering. Local settings
      * (brightness, CCT, timezone) are left untouched. */
-    esp_zb_scheduler_alarm(pair_alarm_cb, 0, 0);
+    esp_zb_scheduler_alarm(pair_alarm_cb, 0, 2000);
 }
 
 static void ota_check_alarm_cb(uint8_t arg)
 {
     (void)arg;
-    zb_ota_query_now();
+    zb_ota_query_now(true);
 }
 
 void appzb_check_ota(void)

@@ -26,6 +26,16 @@ void clock_get_time_str(char *buf, unsigned len);
 void clock_get_date_str(char *buf, unsigned len);
 void clock_get_short_date_str(char *buf, unsigned len);
 
+typedef struct {
+    int minutes;
+    int seconds;
+    uint16_t ms;
+} clock_parts_t;
+
+/* Minutes, seconds and milliseconds inside the current second. Minutes and
+ * seconds are -1 while the clock is not synchronised. */
+void clock_get_parts(clock_parts_t *parts);
+
 /* Called by clock_init on a timer so the Zigbee layer can re-read the Time
  * attribute; wired up from zb_app.c. */
 typedef void (*clock_resync_cb_t)(void);

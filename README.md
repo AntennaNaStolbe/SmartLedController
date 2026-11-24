@@ -131,13 +131,13 @@ Building and publishing a release:
 pio run -e smartled-c6
 python3 tools/make_ota.py --base-url https://github.com/AntennaNaStolbe/SmartLedController/releases/latest/download
 
-git tag v0.1.11
-git push origin v0.1.11
-gh release create v0.1.11 \
+git tag v1.0.0
+git push origin v1.0.0
+gh release create v1.0.0 \
   zigbee2mqtt/ota/AntennaNS-SmartLedController.zigbee \
-  --title "v0.1.11" \
-  --notes "Zigbee OTA firmware 0x0001000B, manufacturer AntennaNS"
-gh release upload v0.1.11 zigbee2mqtt/ota/index.json
+  --title "v1.0.0" \
+  --notes "Zigbee OTA firmware 0x01000000, manufacturer AntennaNS"
+gh release upload v1.0.0 zigbee2mqtt/ota/index.json
 ```
 
 Upload the `.zigbee` file first, then `index.json`. The index must be published
@@ -149,8 +149,8 @@ with 60-byte blocks and a 1 ms delay (set `HA_URL` and `HA_TOKEN` first). It
 targets the default Z2M friendly name; pass `--device` if yours differs:
 
 ```bash
-python3 tools/fast_ota.py --version v0.1.11 --yes
-python3 tools/fast_ota.py --version v0.1.11 --device 0x1234567890abcdef --dry-run
+python3 tools/fast_ota.py --version v1.0.0 --yes
+python3 tools/fast_ota.py --version v1.0.0 --device 0x1234567890abcdef --dry-run
 ```
 
 The manufacturer/image/hardware values in `config.h` and `index.json` must

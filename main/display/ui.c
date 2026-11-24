@@ -1,4 +1,3 @@
-#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -16,6 +15,7 @@
 #include "storage.h"
 #include "time/clock.h"
 #include "zigbee/zb_app.h"
+#include "zigbee/zb_ota.h"
 
 /* The screen background is set once and never changes: pure black with light
  * text on top, in every power state. */
@@ -25,14 +25,13 @@
 #define UI_COLOR_CT        0xffa726
 #define UI_COLOR_TEXT      0xf2f4f7
 #define UI_COLOR_DIM       0x79838f
-#define UI_COLOR_OFF       0x8d949d
 
 /* One complete ring, split into two halves. Both arcs share the geometry so
  * they read as a single dial. The two halves stop this many degrees short of
  * 12 and 6 o'clock so the round line caps do not collide. */
-#define RING_DIAMETER      212
+#define RING_DIAMETER      238
 #define RING_THICKNESS     12
-#define ARC_GAP_DEG        60
+#define ARC_GAP_DEG        70
 #define ARC_TOP_START      (270 + ARC_GAP_DEG / 2)   /* past 12 o'clock     */
 #define ARC_TOP_END        (450 - ARC_GAP_DEG / 2)   /* stops before 6      */
 #define ARC_BOT_START      (90 + ARC_GAP_DEG / 2)    /* past 6 o'clock      */
@@ -40,31 +39,33 @@
 
 /* Vertical centres of the value / caption pairs. Each pair is value on top,
  * caption underneath, and the two pairs are kept clear of each other in the
- * middle of the dial (the ring starts at radius 100, so anything inside
- * +-90 px vertically is safe). */
+ * middle of the dial (the ring's inner edge is near 107 px, so anything
+ * inside +-90 px vertically is safe). */
 #define CENTER_TOP_Y       (-42)   /* colour temperature readout  */
 #define CENTER_CAP_Y       (-12)   /* "TEMP"                      */
 #define CENTER_BOT_Y       (18)    /* brightness readout          */
 #define CENTER_CAP2_Y      (46)    /* "BRIGHT"                    */
 
-#define UI_PI              3.14159265358979323846f
-#define CURVED_TIME_RADIUS 100
-#define CURVED_DATE_RADIUS 96
-#define CURVED_OFF_RADIUS  104
-#define CURVED_TIME_STEP   10
-#define CURVED_DATE_STEP   5
-#define CURVED_OFF_STEP    14
-#define CURVED_TIME_GLYPHS 8
-#define CURVED_DATE_GLYPHS 16
-#define CURVED_OFF_GLYPHS  3
-#define CURVED_TIME_CELL_W 12
-#define CURVED_DATE_CELL_W 10
-#define CURVED_OFF_CELL_W  12
-#define CURVED_CELL_H      20
+#define CLOCK_TIME_Y       (-104)
+#define CLOCK_DATE_Y       (104)
+
+#define STATUS_Y_OFF       (-104)
+#define STATUS_Y_ON        (-78)
+
+#define OFF_TIME_Y         (-25)
+#define OFF_DATE_Y         (35)
+#define OFF_RING_DIAMETER  (236)
+#define OFF_RING_WIDTH     (4)
+#define OFF_RING_GAP       (8)
+
+#define MENU_ITEM_Y0       (-24)
+#define MENU_ITEM_STEP     (32)
+#define MENU_ITEM_W        (176)
+#define MENU_ITEM_H        (28)
 
 typedef enum {
     UI_SCREEN_MAIN,        /* both scales visible (spec "state 1")     */
-    UI_SCREEN_OFF,         /* OFF + clock                              */
+    UI_SCREEN_OFF,         /* large clock                              */
     UI_SCREEN_MENU,        /* settings menu, navigation only           */
 } ui_screen_t;
 
@@ -72,19 +73,6 @@ typedef struct {
     uint8_t kind;          /* 0 = refresh, 1 = input event */
     input_event_t ev;
 } ui_cmd_t;
-
-typedef struct {
-    lv_obj_t *glyphs[16];
-    size_t count;
-    lv_coord_t radius;
-    lv_coord_t cell_w;
-    lv_coord_t cell_h;
-    lv_coord_t box_w;
-    lv_coord_t box_h;
-    int16_t center_deg;
-    int16_t step_deg;
-    bool reverse;
-} curved_text_t;
 
 #define UI_CMD_REFRESH 0
 #define UI_CMD_EVENT   1
@@ -110,20 +98,36 @@ static lv_obj_t *s_lbl_ct;
 static lv_obj_t *s_lbl_br;
 static lv_obj_t *s_lbl_cap_ct;
 static lv_obj_t *s_lbl_cap_br;
-static curved_text_t s_time_text;
-static curved_text_t s_date_text;
 
 /* off group */
 static lv_obj_t *s_grp_off;
-static curved_text_t s_off_text;
-static lv_obj_t *s_lbl_time;
-static lv_obj_t *s_lbl_date;
+static lv_obj_t *s_lbl_hours;
+static lv_obj_t *s_lbl_colon;
+static lv_obj_t *s_lbl_minutes;
+static lv_obj_t *s_lbl_off_date;
+static lv_obj_t *s_arc_seconds;
+static bool s_colon_visible = true;
+
+/* clock pairs */
+typedef struct {
+    lv_obj_t *time;
+    lv_obj_t *date;
+} clock_pair_t;
+
+static clock_pair_t s_clock_main;
+static clock_pair_t s_clock_menu;
 
 /* menu group */
 static lv_obj_t *s_grp_menu;
 static lv_obj_t *s_lbl_menu_title;
-static lv_obj_t *s_lbl_menu_items;
-static lv_obj_t *s_lbl_menu_hint;
+static lv_obj_t *s_menu_item_box[4];
+static lv_obj_t *s_menu_item_lbl[4];
+static lv_obj_t *s_lbl_status;
+
+static TickType_t s_status_until;
+static bool s_status_transient;
+static bool s_ota_check_pending;
+static TickType_t s_ota_check_until;
 
 /* Menu entries. Rotate moves the selection, a single click runs the action,
  * a double click leaves the menu. value is optional and shown next to the
@@ -135,6 +139,9 @@ typedef struct {
 } ui_menu_item_t;
 
 static void update_menu_view(void);
+static void show_screen(ui_screen_t screen, bool animate);
+static void status_set_pairing(void);
+static void status_set_ota_check(void);
 
 static const char *menu_rotation_value(void)
 {
@@ -151,10 +158,28 @@ static void menu_action_rotation(void)
     update_menu_view();
 }
 
+static void menu_action_pair(void)
+{
+    status_set_pairing();
+    appzb_start_pairing();
+}
+
+static void menu_action_ota_check(void)
+{
+    status_set_ota_check();
+    appzb_check_ota();
+}
+
+static void menu_action_exit(void)
+{
+    show_screen(light_model_is_on() ? UI_SCREEN_MAIN : UI_SCREEN_OFF, true);
+}
+
 static const ui_menu_item_t s_menu_items[] = {
-    { "PAIR ZIGBEE", appzb_start_pairing, NULL },
-    { "OTA CHECK",   appzb_check_ota, NULL },
+    { "PAIR ZIGBEE", menu_action_pair, NULL },
+    { "OTA CHECK",   menu_action_ota_check, NULL },
     { "ROTATE",      menu_action_rotation, menu_rotation_value },
+    { "EXIT",        menu_action_exit, NULL },
 };
 #define UI_MENU_ITEM_COUNT (sizeof(s_menu_items) / sizeof(s_menu_items[0]))
 
@@ -299,77 +324,20 @@ static lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font, lv_color_t 
     return lbl;
 }
 
-static void make_curved_text(curved_text_t *text, lv_obj_t *parent, size_t count,
-                             lv_coord_t radius, lv_coord_t cell_w, lv_coord_t cell_h,
-                             int16_t center_deg, int16_t step_deg, bool reverse,
-                             const lv_font_t *font, lv_color_t color)
+static clock_pair_t make_clock_pair(lv_obj_t *parent)
 {
-    text->count = count;
-    text->radius = radius;
-    text->cell_w = cell_w;
-    text->cell_h = cell_h;
-    text->box_w = (lv_coord_t)(cell_w + 12);
-    text->box_h = (lv_coord_t)(cell_h + 10);
-    text->center_deg = center_deg;
-    text->step_deg = step_deg;
-    text->reverse = reverse;
-
-    for (size_t i = 0; i < count; i++) {
-        lv_obj_t *lbl = lv_label_create(parent);
-        lv_obj_set_size(lbl, text->box_w, text->box_h);
-        lv_obj_set_style_text_font(lbl, font, 0);
-        lv_obj_set_style_text_color(lbl, color, 0);
-        lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_pad_all(lbl, 0, 0);
-        lv_obj_set_style_transform_pivot_x(lbl, text->box_w / 2, 0);
-        lv_obj_set_style_transform_pivot_y(lbl, text->box_h / 2, 0);
-        lv_label_set_text(lbl, " ");
-        lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
-        text->glyphs[i] = lbl;
-    }
+    clock_pair_t pair;
+    pair.time = make_label(parent, &lv_font_montserrat_24, lv_color_hex(UI_COLOR_TEXT),
+                           CLOCK_TIME_Y, "--:--");
+    pair.date = make_label(parent, &lv_font_montserrat_24, lv_color_hex(UI_COLOR_TEXT),
+                           CLOCK_DATE_Y, "--.--");
+    return pair;
 }
 
-static void set_curved_text(curved_text_t *text, const char *value)
+static void set_clock_pair(clock_pair_t *pair, const char *time, const char *date)
 {
-    size_t len = strlen(value);
-    if (len > text->count) {
-        len = text->count;
-    }
-
-    float mid = len ? (float)(len - 1) / 2.0f : 0.0f;
-
-    for (size_t i = 0; i < text->count; i++) {
-        if (i >= len) {
-            lv_obj_add_flag(text->glyphs[i], LV_OBJ_FLAG_HIDDEN);
-            continue;
-        }
-
-        char ch[2] = {value[i], '\0'};
-        lv_label_set_text(text->glyphs[i], ch);
-        lv_obj_clear_flag(text->glyphs[i], LV_OBJ_FLAG_HIDDEN);
-
-        float theta = (text->center_deg +
-                       (text->reverse ? -1.0f : 1.0f) * ((float)i - mid) * (float)text->step_deg) * UI_PI / 180.0f;
-        float px = (float)(LCD_H_RES / 2) + text->radius * cosf(theta);
-        float py = (float)(LCD_V_RES / 2) + text->radius * sinf(theta);
-
-        lv_obj_set_pos(text->glyphs[i],
-                       (lv_coord_t)lroundf(px - (float)text->box_w / 2.0f),
-                       (lv_coord_t)lroundf(py - (float)text->box_h / 2.0f));
-
-        float tangent;
-        if (text->reverse) {
-            tangent = atan2f(-cosf(theta), sinf(theta)) * 180.0f / UI_PI;
-        } else {
-            tangent = atan2f(cosf(theta), -sinf(theta)) * 180.0f / UI_PI;
-        }
-        int32_t angle = (int32_t)lroundf(tangent * 10.0f);
-        angle %= 3600;
-        if (angle < 0) {
-            angle += 3600;
-        }
-        lv_obj_set_style_transform_angle(text->glyphs[i], (lv_coord_t)angle, 0);
-    }
+    lv_label_set_text(pair->time, time);
+    lv_label_set_text(pair->date, date);
 }
 
 static void build_main_group(lv_obj_t *scr)
@@ -379,7 +347,7 @@ static void build_main_group(lv_obj_t *scr)
     s_layer_ct = make_layer(s_grp_main);
     s_arc_ct = make_arc(s_layer_ct, ARC_TOP_START, ARC_TOP_END);
     lv_obj_set_style_arc_color(s_arc_ct, lv_color_hex(UI_COLOR_CT), LV_PART_INDICATOR);
-    s_lbl_ct = make_label(s_layer_ct, &lv_font_montserrat_24, lv_color_hex(UI_COLOR_TEXT),
+    s_lbl_ct = make_label(s_layer_ct, &lv_font_montserrat_28, lv_color_hex(UI_COLOR_TEXT),
                           CENTER_TOP_Y, "--");
     s_lbl_cap_ct = make_label(s_layer_ct, &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM),
                               CENTER_CAP_Y, "TEMP");
@@ -387,19 +355,12 @@ static void build_main_group(lv_obj_t *scr)
     s_layer_br = make_layer(s_grp_main);
     s_arc_br = make_arc(s_layer_br, ARC_BOT_START, ARC_BOT_END);
     lv_obj_set_style_arc_color(s_arc_br, lv_color_hex(UI_COLOR_BR), LV_PART_INDICATOR);
-    s_lbl_br = make_label(s_layer_br, &lv_font_montserrat_24, lv_color_hex(UI_COLOR_TEXT),
+    s_lbl_br = make_label(s_layer_br, &lv_font_montserrat_28, lv_color_hex(UI_COLOR_TEXT),
                           CENTER_BOT_Y, "--");
     s_lbl_cap_br = make_label(s_layer_br, &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM),
                               CENTER_CAP2_Y, "BRIGHT");
 
-    make_curved_text(&s_time_text, s_grp_main, CURVED_TIME_GLYPHS,
-                     CURVED_TIME_RADIUS, CURVED_TIME_CELL_W, CURVED_CELL_H,
-                     270, CURVED_TIME_STEP, false,
-                     &lv_font_montserrat_16, lv_color_hex(UI_COLOR_TEXT));
-    make_curved_text(&s_date_text, s_grp_main, CURVED_DATE_GLYPHS,
-                     CURVED_DATE_RADIUS, CURVED_DATE_CELL_W, CURVED_CELL_H,
-                     90, CURVED_DATE_STEP, true,
-                     &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM));
+    s_clock_main = make_clock_pair(s_grp_main);
 }
 
 /* Highlight whichever parameter the encoder currently adjusts: the active
@@ -423,43 +384,86 @@ static void update_mode_indicator(void)
     lv_obj_set_style_arc_opa(s_arc_br, ct ? LV_OPA_50 : LV_OPA_COVER, LV_PART_INDICATOR);
 }
 
+static void layout_off_time(void)
+{
+    if (s_lbl_hours == NULL || s_lbl_colon == NULL || s_lbl_minutes == NULL) {
+        return;
+    }
+
+    const lv_font_t *font = &lv_font_montserrat_48;
+    const char *hours = lv_label_get_text(s_lbl_hours);
+    const char *minutes = lv_label_get_text(s_lbl_minutes);
+    lv_coord_t hours_w = lv_txt_get_width(hours, (uint32_t)strlen(hours), font, 0, LV_TEXT_FLAG_NONE);
+    lv_coord_t colon_w = lv_txt_get_width(":", 1, font, 0, LV_TEXT_FLAG_NONE);
+    lv_coord_t minutes_w = lv_txt_get_width(minutes, (uint32_t)strlen(minutes), font, 0, LV_TEXT_FLAG_NONE);
+    lv_coord_t total = hours_w + colon_w + minutes_w + 2 * OFF_RING_GAP;
+
+    lv_coord_t hours_x = -total / 2 + hours_w / 2;
+    lv_coord_t colon_x = -total / 2 + hours_w + OFF_RING_GAP + colon_w / 2;
+    lv_coord_t minutes_x = -total / 2 + hours_w + OFF_RING_GAP + colon_w + OFF_RING_GAP + minutes_w / 2;
+
+    lv_obj_align(s_lbl_hours, LV_ALIGN_CENTER, hours_x, OFF_TIME_Y);
+    lv_obj_align(s_lbl_colon, LV_ALIGN_CENTER, colon_x, OFF_TIME_Y);
+    lv_obj_align(s_lbl_minutes, LV_ALIGN_CENTER, minutes_x, OFF_TIME_Y);
+}
+
 static void build_off_group(lv_obj_t *scr)
 {
     s_grp_off = make_layer(scr);
-    make_curved_text(&s_off_text, s_grp_off, CURVED_OFF_GLYPHS,
-                     CURVED_OFF_RADIUS, CURVED_OFF_CELL_W, CURVED_CELL_H,
-                     270, CURVED_OFF_STEP, false,
-                     &lv_font_montserrat_16, lv_color_hex(UI_COLOR_OFF));
-    set_curved_text(&s_off_text, "OFF");
-    s_lbl_time = make_label(s_grp_off, &lv_font_montserrat_40, lv_color_hex(UI_COLOR_TEXT),
-                            -20, "--:--");
-    s_lbl_date = make_label(s_grp_off, &lv_font_montserrat_28, lv_color_hex(UI_COLOR_DIM),
-                            28, "--.--");
+
+    s_arc_seconds = lv_arc_create(s_grp_off);
+    lv_obj_set_size(s_arc_seconds, OFF_RING_DIAMETER, OFF_RING_DIAMETER);
+    lv_obj_align(s_arc_seconds, LV_ALIGN_CENTER, 0, 0);
+    lv_arc_set_bg_angles(s_arc_seconds, 0, 360);
+    lv_arc_set_rotation(s_arc_seconds, 270);
+    lv_arc_set_range(s_arc_seconds, 0, 1000);
+    lv_obj_set_style_arc_width(s_arc_seconds, OFF_RING_WIDTH, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(s_arc_seconds, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(s_arc_seconds, OFF_RING_WIDTH, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(s_arc_seconds, lv_color_hex(UI_COLOR_TEXT), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(s_arc_seconds, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(s_arc_seconds, false, LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(s_arc_seconds, false, LV_PART_INDICATOR);
+    lv_obj_remove_style(s_arc_seconds, NULL, LV_PART_KNOB);
+    lv_obj_clear_flag(s_arc_seconds, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_arc_seconds, LV_OBJ_FLAG_SCROLLABLE);
+    lv_arc_set_angles(s_arc_seconds, 0, 0);
+
+    s_lbl_hours = make_label(s_grp_off, &lv_font_montserrat_48, lv_color_hex(UI_COLOR_TEXT),
+                             OFF_TIME_Y, "--");
+    s_lbl_colon = make_label(s_grp_off, &lv_font_montserrat_48, lv_color_hex(UI_COLOR_TEXT),
+                             OFF_TIME_Y, ":");
+    s_lbl_minutes = make_label(s_grp_off, &lv_font_montserrat_48, lv_color_hex(UI_COLOR_TEXT),
+                               OFF_TIME_Y, "--");
+    s_lbl_off_date = make_label(s_grp_off, &lv_font_montserrat_28, lv_color_hex(UI_COLOR_DIM),
+                                OFF_DATE_Y, "--.--.----");
+    layout_off_time();
 }
 
 static void update_menu_view(void)
 {
-    char buf[192];
-    size_t n = 0;
-    for (size_t i = 0; i < UI_MENU_ITEM_COUNT && n < sizeof(buf); i++) {
+    for (size_t i = 0; i < UI_MENU_ITEM_COUNT; i++) {
+        lv_obj_t *box = s_menu_item_box[i];
+        lv_obj_t *lbl = s_menu_item_lbl[i];
+        if (box == NULL || lbl == NULL) {
+            continue;
+        }
+        bool selected = (i == s_menu_index);
+        lv_obj_set_style_bg_color(box, lv_color_hex(selected ? UI_COLOR_BR : UI_COLOR_BG), 0);
+        lv_obj_set_style_bg_opa(box, selected ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_color(box, lv_color_hex(selected ? UI_COLOR_BR : UI_COLOR_DIM), 0);
+        lv_obj_set_style_border_opa(box, selected ? LV_OPA_COVER : LV_OPA_50, 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(selected ? UI_COLOR_TEXT : UI_COLOR_DIM), 0);
+
+        char buf[48];
         const char *value = s_menu_items[i].value ? s_menu_items[i].value() : NULL;
         if (value != NULL) {
-            n += (size_t)snprintf(buf + n, sizeof(buf) - n, "%s%s %s\n",
-                                  i == s_menu_index ? "> " : "  ",
-                                  s_menu_items[i].label, value);
+            snprintf(buf, sizeof(buf), "%s %s", s_menu_items[i].label, value);
+            lv_label_set_text(lbl, buf);
         } else {
-            n += (size_t)snprintf(buf + n, sizeof(buf) - n, "%s%s\n",
-                                  i == s_menu_index ? "> " : "  ",
-                                  s_menu_items[i].label);
+            lv_label_set_text(lbl, s_menu_items[i].label);
         }
     }
-    if (n >= sizeof(buf)) {
-        n = sizeof(buf) - 1;
-    }
-    if (n > 0 && buf[n - 1] == '\n') {
-        buf[n - 1] = '\0';
-    }
-    lv_label_set_text(s_lbl_menu_items, buf);
 }
 
 static void build_menu_group(lv_obj_t *scr)
@@ -467,11 +471,164 @@ static void build_menu_group(lv_obj_t *scr)
     s_grp_menu = make_layer(scr);
     s_lbl_menu_title = make_label(s_grp_menu, &lv_font_montserrat_16, lv_color_hex(UI_COLOR_DIM),
                                   -56, "MENU");
-    s_lbl_menu_items = make_label(s_grp_menu, &lv_font_montserrat_20, lv_color_hex(UI_COLOR_TEXT),
-                                  -6, "");
-    s_lbl_menu_hint = make_label(s_grp_menu, &lv_font_montserrat_14, lv_color_hex(UI_COLOR_DIM),
-                                 52, "rotate / click, double = exit");
+
+    for (size_t i = 0; i < UI_MENU_ITEM_COUNT; i++) {
+        lv_obj_t *box = lv_obj_create(s_grp_menu);
+        lv_obj_set_size(box, MENU_ITEM_W, MENU_ITEM_H);
+        lv_obj_align(box, LV_ALIGN_CENTER, 0, MENU_ITEM_Y0 + (lv_coord_t)i * MENU_ITEM_STEP);
+        lv_obj_set_style_radius(box, 10, 0);
+        lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(box, 1, 0);
+        lv_obj_set_style_border_color(box, lv_color_hex(UI_COLOR_DIM), 0);
+        lv_obj_set_style_border_opa(box, LV_OPA_50, 0);
+        lv_obj_set_style_pad_all(box, 0, 0);
+        lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(box, LV_OBJ_FLAG_CLICKABLE);
+
+        lv_obj_t *lbl = lv_label_create(box);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_center(lbl);
+        s_menu_item_box[i] = box;
+        s_menu_item_lbl[i] = lbl;
+    }
+
+    s_clock_menu = make_clock_pair(s_grp_menu);
     update_menu_view();
+}
+
+static void status_show(const char *text)
+{
+    lv_label_set_text(s_lbl_status, text);
+    lv_obj_clear_flag(s_lbl_status, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void status_hide(void)
+{
+    lv_obj_add_flag(s_lbl_status, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void status_set_transient(const char *text, TickType_t ms)
+{
+    s_status_transient = true;
+    s_ota_check_pending = false;
+    s_status_until = xTaskGetTickCount() + pdMS_TO_TICKS(ms);
+    status_show(text);
+}
+
+static void status_set_pairing(void)
+{
+    status_set_transient("PAIRING...", 2500);
+}
+
+static void status_set_ota_check(void)
+{
+    s_status_transient = false;
+    s_ota_check_pending = true;
+    s_ota_check_until = xTaskGetTickCount() + pdMS_TO_TICKS(8000);
+    status_show("OTA CHECK...");
+}
+
+static void status_reposition(ui_screen_t screen)
+{
+    if (s_lbl_status == NULL) {
+        return;
+    }
+    lv_obj_align(s_lbl_status, LV_ALIGN_CENTER, 0,
+                 screen == UI_SCREEN_OFF ? STATUS_Y_OFF : STATUS_Y_ON);
+}
+
+static void status_tick_cb(lv_timer_t *t)
+{
+    (void)t;
+
+    uint8_t pct;
+    if (zb_ota_get_progress(&pct)) {
+        char buf[24];
+        snprintf(buf, sizeof(buf), "OTA %u%%", (unsigned)pct);
+        status_show(buf);
+        return;
+    }
+
+    zb_ota_query_status_t result;
+    if (zb_ota_take_query_result(&result)) {
+        s_ota_check_pending = false;
+        s_status_transient = true;
+        s_status_until = xTaskGetTickCount() + pdMS_TO_TICKS(3000);
+        const char *text = "NO ANSWER";
+        if (result == ZB_OTA_QUERY_AVAILABLE) {
+            text = "UPDATE FOUND";
+        } else if (result == ZB_OTA_QUERY_NOT_AVAILABLE) {
+            text = "NO UPDATE";
+        } else if (result == ZB_OTA_QUERY_NO_SERVER) {
+            text = "NO OTA SERVER";
+        } else if (result == ZB_OTA_QUERY_NO_NETWORK) {
+            text = "NOT CONNECTED";
+        }
+        status_show(text);
+        return;
+    }
+
+    TickType_t now = xTaskGetTickCount();
+    if (s_ota_check_pending) {
+        if ((int32_t)(s_ota_check_until - now) <= 0) {
+            s_ota_check_pending = false;
+            s_status_transient = true;
+            s_status_until = now + pdMS_TO_TICKS(3000);
+            status_show("NO ANSWER");
+        }
+        return;
+    }
+
+    if (s_status_transient && (int32_t)(s_status_until - now) <= 0) {
+        s_status_transient = false;
+        status_hide();
+    }
+}
+
+static void off_seconds_tick_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (s_screen != UI_SCREEN_OFF || s_arc_seconds == NULL || s_lbl_colon == NULL) {
+        return;
+    }
+
+    clock_parts_t parts;
+    clock_get_parts(&parts);
+
+    int minutes;
+    int seconds;
+    uint32_t phase_ms;
+    if (parts.minutes >= 0) {
+        minutes = parts.minutes;
+        seconds = parts.seconds;
+        phase_ms = (uint32_t)seconds * 1000U + parts.ms;
+    } else {
+        uint32_t mono_ms = lv_tick_get();
+        minutes = (int)((mono_ms / 60000U) % 60U);
+        seconds = (int)((mono_ms / 1000U) % 60U);
+        phase_ms = mono_ms % 1000U;
+    }
+    if (phase_ms >= 60000U) {
+        phase_ms = 59999U;
+    }
+
+    uint16_t angle = (uint16_t)((phase_ms * 360UL) / 60000UL);
+    if ((minutes % 2) == 0) {
+        lv_arc_set_angles(s_arc_seconds, 0, angle);
+    } else {
+        lv_arc_set_angles(s_arc_seconds, angle, 360);
+    }
+
+    bool colon_on = ((seconds % 2) == 0);
+    if (colon_on != s_colon_visible) {
+        if (colon_on) {
+            lv_obj_clear_flag(s_lbl_colon, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_lbl_colon, LV_OBJ_FLAG_HIDDEN);
+        }
+        s_colon_visible = colon_on;
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -480,21 +637,37 @@ static void build_menu_group(lv_obj_t *scr)
 
 static void update_clock_labels(void)
 {
-    char buf[24];
-    clock_get_time_str(buf, sizeof(buf));
-    lv_label_set_text(s_lbl_time, buf);
-    set_curved_text(&s_time_text, buf);
-    clock_get_short_date_str(buf, sizeof(buf));
-    lv_label_set_text(s_lbl_date, buf);
-    set_curved_text(&s_date_text, buf);
+    char time_buf[24];
+    char date_buf[24];
+    char full_date_buf[32];
+    clock_get_time_str(time_buf, sizeof(time_buf));
+    clock_get_short_date_str(date_buf, sizeof(date_buf));
+    if (clock_is_synced()) {
+        clock_get_date_str(full_date_buf, sizeof(full_date_buf));
+    } else {
+        snprintf(full_date_buf, sizeof(full_date_buf), "--.--.----");
+    }
+
+    set_clock_pair(&s_clock_main, time_buf, date_buf);
+    set_clock_pair(&s_clock_menu, time_buf, date_buf);
+
+    char hours[8] = "--";
+    char minutes[8] = "--";
+    const char *colon = strchr(time_buf, ':');
+    if (colon != NULL) {
+        snprintf(hours, sizeof(hours), "%.*s", (int)(colon - time_buf), time_buf);
+        snprintf(minutes, sizeof(minutes), "%s", colon + 1);
+    }
+    lv_label_set_text(s_lbl_hours, hours);
+    lv_label_set_text(s_lbl_minutes, minutes);
+    layout_off_time();
+    lv_label_set_text(s_lbl_off_date, full_date_buf);
 }
 
 static void clock_tick_cb(lv_timer_t *t)
 {
     (void)t;
-    if (s_screen != UI_SCREEN_MENU) {
-        update_clock_labels();
-    }
+    update_clock_labels();
 }
 
 static uint8_t brightness_pct(const light_state_t *st)
@@ -584,9 +757,8 @@ static void show_screen(ui_screen_t screen, bool animate)
     lv_obj_t *oldg = s_cur_group;
 
     s_screen = screen;
-    if (screen == UI_SCREEN_OFF) {
-        update_clock_labels();
-    }
+    update_clock_labels();
+    status_reposition(screen);
 
     if (!animate || oldg == NULL || oldg == newg) {
         s_pending_show = NULL;
@@ -637,9 +809,7 @@ static void refresh_locked(void)
         arc_to(s_arc_ct, color_temp_pct(&st), UI_ANIM_FAST_MS);
     }
 
-    if (s_screen == UI_SCREEN_MAIN) {
-        update_clock_labels();
-    }
+    update_clock_labels();
 }
 
 /* ------------------------------------------------------------------ */
@@ -764,6 +934,9 @@ void ui_init(void)
     build_main_group(scr);
     build_off_group(scr);
     build_menu_group(scr);
+    s_lbl_status = make_label(scr, &lv_font_montserrat_16, lv_color_hex(UI_COLOR_BR),
+                              STATUS_Y_ON, "");
+    lv_obj_add_flag(s_lbl_status, LV_OBJ_FLAG_HIDDEN);
     update_mode_indicator();
 
     /* Start fully transparent so the first transition is a fade-in. */
@@ -771,6 +944,8 @@ void ui_init(void)
     obj_hide(s_grp_menu, 0);
 
     s_clock_timer = lv_timer_create(clock_tick_cb, 1000, NULL);
+    lv_timer_create(status_tick_cb, 250, NULL);
+    lv_timer_create(off_seconds_tick_cb, 25, NULL);
 
     light_state_t st;
     light_model_get(&st);

@@ -149,6 +149,36 @@ void clock_get_short_date_str(char *buf, unsigned len)
     clock_format(buf, len, "%d.%m");
 }
 
+void clock_get_parts(clock_parts_t *parts)
+{
+    if (parts == NULL) {
+        return;
+    }
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool synced = s_synced;
+    int64_t t = now_local_s();
+    int64_t elapsed_us = esp_timer_get_time() - s_sync_mono_us;
+    xSemaphoreGive(s_lock);
+
+    if (!synced) {
+        parts->minutes = -1;
+        parts->seconds = -1;
+        parts->ms = (uint16_t)((esp_timer_get_time() / 1000) % 1000);
+        return;
+    }
+
+    struct tm tmv;
+    time_t tt = (time_t)t;
+    gmtime_r(&tt, &tmv);
+    parts->minutes = tmv.tm_min;
+    parts->seconds = tmv.tm_sec;
+    if (elapsed_us < 0) {
+        elapsed_us = 0;
+    }
+    parts->ms = (uint16_t)((elapsed_us / 1000) % 1000);
+}
+
 void clock_set_resync_cb(clock_resync_cb_t cb)
 {
     s_resync_cb = cb;
