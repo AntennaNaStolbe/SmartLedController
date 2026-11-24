@@ -49,8 +49,7 @@
 #define CLOCK_TIME_Y       (-104)
 #define CLOCK_DATE_Y       (104)
 
-#define STATUS_Y_OFF       (-104)
-#define STATUS_Y_ON        (-78)
+#define STATUS_Y           (-78)
 
 #define OFF_TIME_Y         (-25)
 #define OFF_DATE_Y         (35)
@@ -58,7 +57,7 @@
 #define OFF_RING_WIDTH     (4)
 #define OFF_RING_GAP       (8)
 
-#define MENU_ITEM_Y0       (-24)
+#define MENU_ITEM_Y0       (-32)
 #define MENU_ITEM_STEP     (32)
 #define MENU_ITEM_W        (176)
 #define MENU_ITEM_H        (28)
@@ -126,8 +125,6 @@ static lv_obj_t *s_lbl_status;
 
 static TickType_t s_status_until;
 static bool s_status_transient;
-static bool s_ota_check_pending;
-static TickType_t s_ota_check_until;
 
 /* Menu entries. Rotate moves the selection, a single click runs the action,
  * a double click leaves the menu. value is optional and shown next to the
@@ -141,7 +138,6 @@ typedef struct {
 static void update_menu_view(void);
 static void show_screen(ui_screen_t screen, bool animate);
 static void status_set_pairing(void);
-static void status_set_ota_check(void);
 
 static const char *menu_rotation_value(void)
 {
@@ -164,12 +160,6 @@ static void menu_action_pair(void)
     appzb_start_pairing();
 }
 
-static void menu_action_ota_check(void)
-{
-    status_set_ota_check();
-    appzb_check_ota();
-}
-
 static void menu_action_exit(void)
 {
     show_screen(light_model_is_on() ? UI_SCREEN_MAIN : UI_SCREEN_OFF, true);
@@ -177,7 +167,6 @@ static void menu_action_exit(void)
 
 static const ui_menu_item_t s_menu_items[] = {
     { "PAIR ZIGBEE", menu_action_pair, NULL },
-    { "OTA CHECK",   menu_action_ota_check, NULL },
     { "ROTATE",      menu_action_rotation, menu_rotation_value },
     { "EXIT",        menu_action_exit, NULL },
 };
@@ -468,9 +457,12 @@ static void update_menu_view(void)
 
 static void build_menu_group(lv_obj_t *scr)
 {
+    char title[32];
+    snprintf(title, sizeof(title), "MENU | v.%s", FW_VERSION);
+
     s_grp_menu = make_layer(scr);
     s_lbl_menu_title = make_label(s_grp_menu, &lv_font_montserrat_16, lv_color_hex(UI_COLOR_DIM),
-                                  -56, "MENU");
+                                  -56, title);
 
     for (size_t i = 0; i < UI_MENU_ITEM_COUNT; i++) {
         lv_obj_t *box = lv_obj_create(s_grp_menu);
@@ -511,7 +503,6 @@ static void status_hide(void)
 static void status_set_transient(const char *text, TickType_t ms)
 {
     s_status_transient = true;
-    s_ota_check_pending = false;
     s_status_until = xTaskGetTickCount() + pdMS_TO_TICKS(ms);
     status_show(text);
 }
@@ -521,23 +512,6 @@ static void status_set_pairing(void)
     status_set_transient("PAIRING...", 2500);
 }
 
-static void status_set_ota_check(void)
-{
-    s_status_transient = false;
-    s_ota_check_pending = true;
-    s_ota_check_until = xTaskGetTickCount() + pdMS_TO_TICKS(8000);
-    status_show("OTA CHECK...");
-}
-
-static void status_reposition(ui_screen_t screen)
-{
-    if (s_lbl_status == NULL) {
-        return;
-    }
-    lv_obj_align(s_lbl_status, LV_ALIGN_CENTER, 0,
-                 screen == UI_SCREEN_OFF ? STATUS_Y_OFF : STATUS_Y_ON);
-}
-
 static void status_tick_cb(lv_timer_t *t)
 {
     (void)t;
@@ -545,41 +519,12 @@ static void status_tick_cb(lv_timer_t *t)
     uint8_t pct;
     if (zb_ota_get_progress(&pct)) {
         char buf[24];
-        snprintf(buf, sizeof(buf), "OTA %u%%", (unsigned)pct);
+        snprintf(buf, sizeof(buf), "OTA %u%%...", (unsigned)pct);
         status_show(buf);
         return;
     }
 
-    zb_ota_query_status_t result;
-    if (zb_ota_take_query_result(&result)) {
-        s_ota_check_pending = false;
-        s_status_transient = true;
-        s_status_until = xTaskGetTickCount() + pdMS_TO_TICKS(3000);
-        const char *text = "NO ANSWER";
-        if (result == ZB_OTA_QUERY_AVAILABLE) {
-            text = "UPDATE FOUND";
-        } else if (result == ZB_OTA_QUERY_NOT_AVAILABLE) {
-            text = "NO UPDATE";
-        } else if (result == ZB_OTA_QUERY_NO_SERVER) {
-            text = "NO OTA SERVER";
-        } else if (result == ZB_OTA_QUERY_NO_NETWORK) {
-            text = "NOT CONNECTED";
-        }
-        status_show(text);
-        return;
-    }
-
     TickType_t now = xTaskGetTickCount();
-    if (s_ota_check_pending) {
-        if ((int32_t)(s_ota_check_until - now) <= 0) {
-            s_ota_check_pending = false;
-            s_status_transient = true;
-            s_status_until = now + pdMS_TO_TICKS(3000);
-            status_show("NO ANSWER");
-        }
-        return;
-    }
-
     if (s_status_transient && (int32_t)(s_status_until - now) <= 0) {
         s_status_transient = false;
         status_hide();
@@ -758,7 +703,6 @@ static void show_screen(ui_screen_t screen, bool animate)
 
     s_screen = screen;
     update_clock_labels();
-    status_reposition(screen);
 
     if (!animate || oldg == NULL || oldg == newg) {
         s_pending_show = NULL;
@@ -935,7 +879,7 @@ void ui_init(void)
     build_off_group(scr);
     build_menu_group(scr);
     s_lbl_status = make_label(scr, &lv_font_montserrat_16, lv_color_hex(UI_COLOR_BR),
-                              STATUS_Y_ON, "");
+                              STATUS_Y, "");
     lv_obj_add_flag(s_lbl_status, LV_OBJ_FLAG_HIDDEN);
     update_mode_indicator();
 

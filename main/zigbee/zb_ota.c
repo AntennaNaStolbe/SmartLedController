@@ -31,8 +31,6 @@ static uint32_t s_written = 0;
 static volatile bool s_in_progress = false;
 static uint32_t s_image_size = 0;
 static uint32_t s_file_version = 0;
-static volatile bool s_query_manual = false;
-static volatile zb_ota_query_status_t s_query_status = ZB_OTA_QUERY_IDLE;
 
 static void zb_ota_reset(void)
 {
@@ -54,9 +52,6 @@ static void zb_zdo_match_desc_cb(esp_zb_zdp_status_t status, uint16_t addr, uint
 
     if (status != ESP_ZB_ZDP_STATUS_SUCCESS) {
         ESP_LOGW(TAG, "OTA server not found on coordinator");
-        if (s_query_manual) {
-            s_query_status = ZB_OTA_QUERY_NO_SERVER;
-        }
         return;
     }
 
@@ -70,9 +65,6 @@ static void zb_ota_match_server(void)
 {
     if (!esp_zb_bdb_dev_joined()) {
         ESP_LOGW(TAG, "Cannot query OTA: not joined to a Zigbee network");
-        if (s_query_manual) {
-            s_query_status = ZB_OTA_QUERY_NO_NETWORK;
-        }
         return;
     }
 
@@ -262,18 +254,12 @@ static esp_err_t zb_ota_query_resp_handler(const esp_zb_zcl_ota_upgrade_query_im
     if (msg->info.status == ESP_ZB_ZCL_STATUS_SUCCESS && msg->query_status == 0x00) {
         s_file_version = msg->file_version;
         s_image_size = msg->image_size;
-        if (s_query_manual) {
-            s_query_status = ZB_OTA_QUERY_AVAILABLE;
-        }
         ESP_LOGI(TAG, "OTA image available: version 0x%08lx, size %lu, server 0x%04x ep %u",
                  (unsigned long)msg->file_version, (unsigned long)msg->image_size,
                  msg->server_addr.u.short_addr, msg->server_endpoint);
     } else {
         s_file_version = 0;
         s_image_size = 0;
-        if (s_query_manual) {
-            s_query_status = ZB_OTA_QUERY_NOT_AVAILABLE;
-        }
         ESP_LOGI(TAG, "No OTA image (query status 0x%02x)", msg->query_status);
     }
     return ESP_OK;
@@ -297,12 +283,8 @@ esp_err_t zb_ota_action_handler(esp_zb_core_action_callback_id_t callback_id, co
     }
 }
 
-void zb_ota_query_now(bool manual)
+void zb_ota_query_now(void)
 {
-    if (manual) {
-        s_query_status = ZB_OTA_QUERY_CHECKING;
-        s_query_manual = true;
-    }
     zb_ota_match_server();
 }
 
@@ -316,19 +298,5 @@ bool zb_ota_get_progress(uint8_t *percent)
         uint32_t expected = s_stream_expected;
         *percent = expected ? (uint8_t)((received * 100UL) / expected) : 0;
     }
-    return true;
-}
-
-bool zb_ota_take_query_result(zb_ota_query_status_t *status)
-{
-    zb_ota_query_status_t result = s_query_status;
-    if (result == ZB_OTA_QUERY_IDLE || result == ZB_OTA_QUERY_CHECKING) {
-        return false;
-    }
-    if (status != NULL) {
-        *status = result;
-    }
-    s_query_status = ZB_OTA_QUERY_IDLE;
-    s_query_manual = false;
     return true;
 }

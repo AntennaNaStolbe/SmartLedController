@@ -109,21 +109,37 @@ Assistant.
 
 ### OTA setup in zigbee2mqtt
 
-Add a public OTA override index to `configuration.yaml`:
+For a fresh installation, do this once:
 
-```yaml
-ota:
-  zigbee_ota_override_index_location: https://github.com/AntennaNaStolbe/SmartLedController/releases/latest/download/index.json
-```
+1. In the Zigbee2MQTT add-on, open **Configuration** and add this to
+   `configuration.yaml` (on HAOS the file is
+   `/addon_configs/45df7312_zigbee2mqtt/configuration.yaml`):
 
-Restart Z2M. The device queries the coordinator's OTA server on join and every
-6 hours. To start an update, use Z2M device → OTA → `Check for updates` /
-`Update`, or the Home Assistant `update` entity. A manual query is also
-available in the device menu (`OTA CHECK`).
+   ```yaml
+   ota:
+     zigbee_ota_override_index_location: https://github.com/AntennaNaStolbe/SmartLedController/releases/latest/download/index.json
+   ```
+
+2. Save and restart only the Zigbee2MQTT add-on. Home Assistant does not need
+   a restart.
+3. Pair the lamp. Open the device in Z2M → **OTA** → **Check for updates**.
+   If a newer version is found, press **Update**. The same works from the
+   Home Assistant `update` entity.
+4. Updates started from the HA entity are slow: Z2M defaults to 250 ms between
+   blocks and 50-byte chunks, so a 1.2 MB image can take over an hour. Use
+   `tools/fast_ota.py` below to send 100-byte chunks with a 1 ms delay.
+5. After the device reboots, Z2M re-interviews it automatically. If the HA
+   version still looks stale, use Z2M → **Re-interview**.
+
+`Check for updates` only asks whether an image is available; it does not
+download anything. The download starts only from **Update**, the HA `update`
+entity, or `tools/fast_ota.py`. The device menu has no OTA item because the
+device cannot start the coordinator-side transfer by itself.
 
 OTA settings in `config.h`: `OTA_FILE_VERSION` (bump for every release),
 `OTA_MANUFACTURER=0x1A1A`, `OTA_IMAGE_TYPE=0x0002`, `OTA_HARDWARE_VERSION=0x0001`
 and `OTA_MAX_DATA_SIZE=223`. They must match `zigbee2mqtt/ota/index.json`.
+Z2M itself caps chunks at 100 bytes, which is fine for this firmware.
 
 Building and publishing a release:
 
@@ -131,13 +147,13 @@ Building and publishing a release:
 pio run -e smartled-c6
 python3 tools/make_ota.py --base-url https://github.com/AntennaNaStolbe/SmartLedController/releases/latest/download
 
-git tag v1.0.0
-git push origin v1.0.0
-gh release create v1.0.0 \
+git tag v1.0.1
+git push origin v1.0.1
+gh release create v1.0.1 \
   zigbee2mqtt/ota/AntennaNS-SmartLedController.zigbee \
-  --title "v1.0.0" \
-  --notes "Zigbee OTA firmware 0x01000000, manufacturer AntennaNS"
-gh release upload v1.0.0 zigbee2mqtt/ota/index.json
+  --title "v1.0.1" \
+  --notes "Zigbee OTA firmware 0x01000001, manufacturer AntennaNS"
+gh release upload v1.0.1 zigbee2mqtt/ota/index.json
 ```
 
 Upload the `.zigbee` file first, then `index.json`. The index must be published
@@ -145,12 +161,12 @@ in a non-draft release, and `fileVersion` must be higher than the version
 running on the device. After OTA, use `Re-interview` in Z2M to refresh metadata.
 
 For faster one-off updates, `tools/fast_ota.py` publishes the Z2M bridge request
-with 60-byte blocks and a 1 ms delay (set `HA_URL` and `HA_TOKEN` first). It
+with 100-byte blocks and a 1 ms delay (set `HA_URL` and `HA_TOKEN` first). It
 targets the default Z2M friendly name; pass `--device` if yours differs:
 
 ```bash
-python3 tools/fast_ota.py --version v1.0.0 --yes
-python3 tools/fast_ota.py --version v1.0.0 --device 0x1234567890abcdef --dry-run
+python3 tools/fast_ota.py --version v1.0.1 --yes
+python3 tools/fast_ota.py --version v1.0.1 --device 0x1234567890abcdef --dry-run
 ```
 
 The manufacturer/image/hardware values in `config.h` and `index.json` must
@@ -177,11 +193,11 @@ One dial split into two halves on the 240×240 GC9A01:
 Screens:
 
 - **main** — both scales, both readouts, active-mode highlight
-- **off** — `OFF` plus the current time and date
-- **menu** — entered / left with a double click; rotate to choose `PAIR ZIGBEE`,
-  `OTA CHECK` or `ROTATE`, click to run, hold 5 s for a factory reset. `ROTATE`
-  cycles the display through 0°, 90°, 180° and 270° and shows the current
-  angle next to the item.
+- **off** — large clock, full date and a minute arc around the bezel
+- **menu** — entered / left with a double click; the title shows the firmware
+  version. Rotate to choose `PAIR ZIGBEE`, `ROTATE` or `EXIT`, click to run,
+  hold 5 s for a factory reset. `ROTATE` cycles the display through 0°, 90°,
+  180° and 270° and shows the current angle next to the item.
 
 Dial values and screen changes are animated (60–200 ms).
 
