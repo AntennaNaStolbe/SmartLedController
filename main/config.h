@@ -7,7 +7,7 @@
 #define PRODUCT_NAME         "SmartLedController"
 #define MANUFACTURER         "AntennaNS"
 #define MODEL_IDENTIFIER     "SLCTR-C6-CWW"
-#define FW_VERSION           "1.0.1"
+#define FW_VERSION           "1.0.4"
 #define FW_DATE_CODE         "20261124"
 
 /* ------------------------------------------------------------------ */
@@ -16,11 +16,11 @@
 /* Keep these in sync with tools/make_ota.py and zigbee2mqtt/ota/index.json.
  * Bump OTA_FILE_VERSION for every release so z2m sees a newer image. */
 #define OTA_QUERY_INTERVAL_MS       (6UL * 60UL * 60UL * 1000UL)
-#define OTA_FILE_VERSION            0x01000001
+#define OTA_FILE_VERSION            0x01000004
 #define OTA_MANUFACTURER            0x1A1A
 #define OTA_IMAGE_TYPE              0x0002
 #define OTA_HARDWARE_VERSION        0x0001
-#define OTA_MAX_DATA_SIZE           223
+#define OTA_MAX_DATA_SIZE           50
 #define OTA_QUERY_INTERVAL_MIN      (OTA_QUERY_INTERVAL_MS / 60000UL)
 
 /* ------------------------------------------------------------------ */

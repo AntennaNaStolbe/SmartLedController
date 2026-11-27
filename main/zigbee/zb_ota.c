@@ -7,6 +7,7 @@
 #include "esp_system.h"
 #include "esp_zigbee_ota.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "zdo/esp_zigbee_zdo_command.h"
 
 #include "config.h"
@@ -17,6 +18,8 @@
 
 #define OTA_ELEMENT_HEADER_LEN 6
 #define OTA_ELEMENT_TAG_UPGRADE_IMAGE 0x0000
+#define OTA_WATCHDOG_PERIOD_MS 5000
+#define OTA_STALL_TIMEOUT_MS  30000
 
 static const esp_partition_t *s_ota_partition = NULL;
 static esp_ota_handle_t s_ota_handle = 0;
@@ -31,6 +34,53 @@ static uint32_t s_written = 0;
 static volatile bool s_in_progress = false;
 static uint32_t s_image_size = 0;
 static uint32_t s_file_version = 0;
+static volatile zb_ota_result_t s_result = ZB_OTA_RESULT_NONE;
+static TickType_t s_last_block_tick = 0;
+static bool s_watchdog_scheduled = false;
+
+static void zb_ota_reset(void);
+
+static void zb_ota_watchdog_cb(uint8_t param)
+{
+    (void)param;
+
+    if (!s_in_progress) {
+        s_watchdog_scheduled = false;
+        return;
+    }
+    if ((TickType_t)(xTaskGetTickCount() - s_last_block_tick) < pdMS_TO_TICKS(OTA_STALL_TIMEOUT_MS)) {
+        return;
+    }
+
+    ESP_LOGW(TAG, "OTA stalled at %lu / %lu bytes",
+             (unsigned long)s_received, (unsigned long)s_stream_expected);
+    if (s_ota_handle) {
+        esp_ota_abort(s_ota_handle);
+    }
+    s_result = ZB_OTA_RESULT_FAIL;
+    zb_ota_reset();
+    s_watchdog_scheduled = false;
+    esp_zb_scheduler_alarm_cancel(zb_ota_watchdog_cb, 0);
+}
+
+static void zb_ota_watchdog_start(void)
+{
+    if (s_watchdog_scheduled) {
+        return;
+    }
+    s_watchdog_scheduled = true;
+    s_last_block_tick = xTaskGetTickCount();
+    esp_zb_scheduler_alarm(zb_ota_watchdog_cb, 0, OTA_WATCHDOG_PERIOD_MS);
+}
+
+static void zb_ota_watchdog_stop(void)
+{
+    if (!s_watchdog_scheduled) {
+        return;
+    }
+    s_watchdog_scheduled = false;
+    esp_zb_scheduler_alarm_cancel(zb_ota_watchdog_cb, 0);
+}
 
 static void zb_ota_reset(void)
 {
@@ -159,6 +209,7 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
         ret = esp_ota_begin(s_ota_partition, 0, &s_ota_handle);
         if (ret == ESP_OK) {
             s_in_progress = true;
+            zb_ota_watchdog_start();
         }
         break;
     }
@@ -174,6 +225,7 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
                      (unsigned long)s_expected_size);
         }
         s_received += msg->payload_size;
+        s_last_block_tick = xTaskGetTickCount();
         ESP_LOGD(TAG, "OTA receive: block %u, total %lu / %lu",
                  msg->payload_size, (unsigned long)s_received, (unsigned long)s_stream_expected);
         ret = zb_ota_extract_payload(msg, stream_expected, &payload, &payload_size);
@@ -195,7 +247,7 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
     }
 
     case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_CHECK:
-        ret = (s_received == s_stream_expected && s_written + OTA_ELEMENT_HEADER_LEN == s_stream_expected)
+        ret = (s_received >= s_stream_expected && s_written + OTA_ELEMENT_HEADER_LEN == s_stream_expected)
                   ? ESP_OK : ESP_ERR_INVALID_SIZE;
         ESP_LOGI(TAG, "OTA check: %s (%lu / %lu, written %lu)",
                  ret == ESP_OK ? "OK" : "FAILED",
@@ -210,15 +262,19 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
 
     case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_FINISH:
         ESP_LOGI(TAG, "OTA finished, activating partition %s", s_ota_partition ? s_ota_partition->label : "?");
+        s_in_progress = false;
+        zb_ota_watchdog_stop();
         ret = esp_ota_end(s_ota_handle);
         if (ret == ESP_OK) {
             ret = esp_ota_set_boot_partition(s_ota_partition);
         }
         if (ret == ESP_OK) {
-            s_in_progress = false;
+            s_result = ZB_OTA_RESULT_SUCCESS;
             ESP_LOGW(TAG, "Rebooting into upgraded firmware");
             esp_restart();
         }
+        s_result = ZB_OTA_RESULT_FAIL;
+        ESP_LOGE(TAG, "OTA activation failed: %s", esp_err_to_name(ret));
         break;
 
     case ESP_ZB_ZCL_OTA_UPGRADE_STATUS_ABORT:
@@ -229,6 +285,8 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
         if (s_in_progress) {
             esp_ota_abort(s_ota_handle);
         }
+        s_result = ZB_OTA_RESULT_FAIL;
+        zb_ota_watchdog_stop();
         zb_ota_reset();
         s_image_size = 0;
         s_file_version = 0;
@@ -244,6 +302,8 @@ static esp_err_t zb_ota_status_handler(const esp_zb_zcl_ota_upgrade_value_messag
         if (s_in_progress) {
             esp_ota_abort(s_ota_handle);
         }
+        s_result = ZB_OTA_RESULT_FAIL;
+        zb_ota_watchdog_stop();
         zb_ota_reset();
     }
     return ret;
@@ -299,4 +359,11 @@ bool zb_ota_get_progress(uint8_t *percent)
         *percent = expected ? (uint8_t)((received * 100UL) / expected) : 0;
     }
     return true;
+}
+
+zb_ota_result_t zb_ota_take_result(void)
+{
+    zb_ota_result_t result = (zb_ota_result_t)s_result;
+    s_result = ZB_OTA_RESULT_NONE;
+    return result;
 }

@@ -18,3 +18,13 @@ void zb_ota_query_now(void);
 
 /* True while an image is being written; percent is 0..100. */
 bool zb_ota_get_progress(uint8_t *percent);
+
+/* Result of the last finished upgrade. Read (and clear) it when progress
+ * stops, so the UI can replace "OTA 100%" with a final status. */
+typedef enum {
+    ZB_OTA_RESULT_NONE = 0,
+    ZB_OTA_RESULT_SUCCESS,
+    ZB_OTA_RESULT_FAIL,
+} zb_ota_result_t;
+
+zb_ota_result_t zb_ota_take_result(void);

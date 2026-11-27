@@ -50,13 +50,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=100,
-        help="OTA image block size in bytes",
+        default=50,
+        help="OTA image block size in bytes (100 did not work on this device)",
     )
     parser.add_argument(
         "--delay",
         type=int,
-        default=1,
+        default=250,
         help="delay between OTA blocks in milliseconds",
     )
     parser.add_argument(

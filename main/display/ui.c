@@ -125,6 +125,7 @@ static lv_obj_t *s_lbl_status;
 
 static TickType_t s_status_until;
 static bool s_status_transient;
+static bool s_ota_was_active;
 
 /* Menu entries. Rotate moves the selection, a single click runs the action,
  * a double click leaves the menu. value is optional and shown next to the
@@ -518,9 +519,24 @@ static void status_tick_cb(lv_timer_t *t)
 
     uint8_t pct;
     if (zb_ota_get_progress(&pct)) {
+        s_ota_was_active = true;
         char buf[24];
         snprintf(buf, sizeof(buf), "OTA %u%%...", (unsigned)pct);
         status_show(buf);
+        return;
+    }
+
+    if (s_ota_was_active) {
+        s_ota_was_active = false;
+        zb_ota_result_t result = zb_ota_take_result();
+        if (result == ZB_OTA_RESULT_FAIL) {
+            status_set_transient("OTA FAILED", 4000);
+        } else if (result == ZB_OTA_RESULT_SUCCESS) {
+            status_set_transient("OTA DONE", 2000);
+        } else {
+            s_status_transient = false;
+            status_hide();
+        }
         return;
     }
 
